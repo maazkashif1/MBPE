@@ -76,3 +76,13 @@ Gaps are holes in Binance's archive, not exchange outages: futures 1m candles ha
 ## Feature exclusions (Phase 1, Oct 2026)
 - **Top-trader long/short ratios** (`count_toptrader_long_short_ratio`, `sum_toptrader_long_short_ratio`) are excluded from MVP features. They are blank for most of 2022 (2021-12-30 → 2022-12-14).
 - **Taker buy/sell ratio** is computed from futures 1m kline taker volume (`taker_buy_volume` vs `volume − taker_buy_volume`), not from metrics' `sum_taker_long_short_vol_ratio` (blank 2021-12-30 → 2022-05-09). Kline volume is a flow, so the flows rule applies.
+
+## Label and cost variants (pre-registered, 2026-10-26)
+Registered before any modeling. **No further label or cost variants will be added after results are seen.** Results are reported for every combination below, not only the best one.
+
+| Variant | Definition | File / name |
+|---|---|---|
+| Label set A | Current config: Wilder ATR(14) on 1h bars, +2 / −1 ATR, 4h horizon | `config/labels.yaml` → `data/labels/triple_barrier.parquet` |
+| Label set B | Identical to A, except ATR = Wilder ATR(14) on **4h bars** built from 1m candles, using only 4h bars closed at or before t | `config/labels_B.yaml` → `data/labels/triple_barrier_B.parquet` |
+| Cost scenario `taker` | Every fill pays the 0.05% taker fee + 2 bps slippage. **Headline result**; stored `net_R` / `label` use it | `scenario_net_r(..., "taker")` |
+| Cost scenario `maker_entry_tp` | Entry and take-profit exits at a 2 bps maker fee with no slippage; stop and expiry exits stay taker fee + slippage. **Optimistic**: limit-order fills (queue position, non-fills, adverse selection) aren't modeled | `scenario_net_r(..., "maker_entry_tp")` |

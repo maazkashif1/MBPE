@@ -84,3 +84,52 @@ Following "gaps stay gaps", these columns are nullable in the clean schema and t
   - short mirrors long on a flipped path.
 
   The suite is 24 tests in total, all passing.
+
+## Phase 1 step 2b: pre-registered label and cost variants (2026-10-26)
+
+The variants are registered in SCOPE.md ("Label and cost variants (pre-registered)").
+
+**Code changes**
+- Costs are now separate columns: `fee_R`, `slippage_R` and `funding_R`, next to `gross_R` and the new `exit_price`. These replace the old combined `fees_R`. `net_R` and `label` are unchanged (taker scenario); set A's means are identical to step 2.
+- `scenario_net_r(labels, cfg, scenario)` recomputes net_R for `taker` or `maker_entry_tp`. It uses the same cost expression as the stored columns, and a test checks that `taker` reproduces the stored `net_R` exactly.
+- The ATR timeframe is a config field (`atr_timeframe`). Each hourly decision time takes the ATR of the latest bar closed at or before t (as-of join).
+- 30 tests in total. New ones:
+  - the 4h ATR at t = 64h–67h uses only the bar closed at 64h, unchanged when candles from 64h on are altered, and changes once the next bar closes;
+  - 4h warm-up = 56h;
+  - taker scenario reproduces stored net_R exactly;
+  - exact maker-scenario net_R for TP, SL and expiry;
+  - unknown scenario raises.
+
+### Label set B (4h ATR): `data/labels/triple_barrier_B.parquet`
+107,688 rows; skipped 55 decision times for warm-up (14 × 4h bars) and 5 at the end of data. The median ATR is 153 bps of price, versus 73 bps for set A, so the barriers are about twice as wide.
+
+| Year | Side | Rows | Label = 1 | TP | SL | Expiry | Avg hold (min) | Mean net_R |
+|---|---|---|---|---|---|---|---|---|
+| 2020 | long | 2,872 | 47.5% | 2.9% | 11.5% | 85.7% | 224 | −0.017 |
+| 2020 | short | 2,872 | 36.8% | 2.7% | 12.3% | 85.0% | 224 | −0.144 |
+| 2021 | long | 8,760 | 45.1% | 1.4% | 12.0% | 86.6% | 226 | −0.059 |
+| 2021 | short | 8,760 | 44.5% | 2.0% | 9.4% | 88.7% | 228 | −0.045 |
+| 2022 | long | 8,760 | 40.1% | 1.9% | 12.8% | 85.3% | 224 | −0.105 |
+| 2022 | short | 8,760 | 41.5% | 2.1% | 10.8% | 87.1% | 226 | −0.064 |
+| 2023 | long | 8,760 | 36.9% | 3.3% | 12.1% | 84.6% | 223 | −0.107 |
+| 2023 | short | 8,760 | 35.9% | 2.7% | 12.5% | 84.8% | 223 | −0.139 |
+| 2024 | long | 8,784 | 42.3% | 2.4% | 12.9% | 84.8% | 223 | −0.078 |
+| 2024 | short | 8,784 | 38.8% | 2.8% | 12.4% | 84.8% | 224 | −0.102 |
+| 2025 | long | 8,760 | 39.9% | 2.1% | 13.1% | 84.8% | 224 | −0.117 |
+| 2025 | short | 8,760 | 38.9% | 2.7% | 11.4% | 85.9% | 225 | −0.112 |
+| 2026 | long | 7,148 | 38.2% | 2.3% | 13.4% | 84.3% | 223 | −0.131 |
+| 2026 | short | 7,148 | 38.4% | 2.2% | 12.1% | 85.7% | 225 | −0.117 |
+
+### Baselines: mean net_R for every label set × cost scenario
+
+| Label set | Strategy | `taker` (headline) | `maker_entry_tp` (optimistic) | gross_R | fee_R | slippage_R | funding_R |
+|---|---|---|---|---|---|---|---|
+| A (1h ATR) | always-long | **−0.220** | −0.132 | +0.002 | 0.156 | 0.062 | −0.004 |
+| A (1h ATR) | always-short | **−0.218** | −0.130 | −0.004 | 0.156 | 0.062 | +0.004 |
+| B (4h ATR) | always-long | **−0.094** | −0.058 | +0.007 | 0.070 | 0.028 | −0.003 |
+| B (4h ATR) | always-short | **−0.099** | −0.063 | −0.003 | 0.070 | 0.028 | +0.003 |
+
+Notes:
+- **Set B's smaller loss is mechanical, not an edge.** Costs are fixed in bps, and the R unit doubles with the 4h ATR, so costs in R roughly halve (0.218 → 0.098). Gross_R is ≈ 0 in both sets. Compare models within a label set, never across sets by R.
+- **Set B is close to a fixed-horizon label:** 85% of trades expire, and TP is hit ~2% of the time. Its `label` mostly reflects the sign of the 4h return net of costs.
+- **`maker_entry_tp` cuts costs by ~40%** for both sets. It stays an upper bound, because limit-order fills aren't modeled.

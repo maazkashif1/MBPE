@@ -4,7 +4,14 @@ import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.labels.triple_barrier import LabelConfig, hourly_atr, label_trades
+from mbpe.labels.triple_barrier import (
+    LabelConfig,
+    atr_bars,
+    build_labels,
+    decision_atr,
+    label_trades,
+    scenario_net_r,
+)
 
 T = datetime(2024, 1, 1, 12, tzinfo=UTC)  # decision time
 CFG = LabelConfig(horizon_minutes=5, latency_minutes=1)  # entry at T+1m, window T+1m .. T+5m
@@ -114,32 +121,99 @@ def test_changing_candles_after_exit_does_not_change_row():
     assert changed == base
 
 
-def test_atr_uses_only_bars_closed_by_t():
-    rng = np.random.default_rng(0)
-    start = datetime(2024, 1, 1, tzinfo=UTC)
-    n = 30 * 60
+def random_candles(hours: int, seed: int = 0) -> pl.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = hours * 60
     close = 100 + np.cumsum(rng.normal(0, 0.5, n))
-    df = pl.DataFrame(
+    return pl.DataFrame(
         {
-            "open_time": [start + timedelta(minutes=m) for m in range(n)],
+            "open_time": [START + timedelta(minutes=m) for m in range(n)],
             "open": close,
             "high": close + rng.uniform(0, 1, n),
             "low": close - rng.uniform(0, 1, n),
             "close": close,
         }
     ).with_columns(pl.col("open_time").cast(pl.Datetime("ms", "UTC")))
-    t = start + timedelta(hours=20)
-    atr = hourly_atr(df, 14).filter(pl.col("decision_time") == t)["atr"][0]
+
+
+def shock_from(df: pl.DataFrame, t: datetime) -> pl.DataFrame:
     after = pl.col("open_time") >= t
-    shocked = df.with_columns(
+    return df.with_columns(
         high=pl.when(after).then(pl.col("high") * 3).otherwise("high"),
         low=pl.when(after).then(pl.col("low") / 3).otherwise("low"),
         close=pl.when(after).then(pl.col("close") * 2).otherwise("close"),
     )
+
+
+def atr_at(df: pl.DataFrame, cfg: LabelConfig, t: datetime):
+    return decision_atr(df, cfg).filter(pl.col("decision_time") == t)["atr"][0]
+
+
+START = datetime(2024, 1, 1, tzinfo=UTC)
+
+
+def test_atr_uses_only_bars_closed_by_t():
+    df, cfg = random_candles(30), LabelConfig()
+    t = START + timedelta(hours=20)
+    atr = atr_at(df, cfg, t)
     assert atr is not None
-    assert hourly_atr(shocked, 14).filter(pl.col("decision_time") == t)["atr"][0] == atr
+    assert atr_at(shock_from(df, t), cfg, t) == atr
+    assert atr == atr_bars(df, "1h", 14).filter(pl.col("bar_close") == t)["atr"][0]  # the bar closing at t
     # warm-up: no ATR before 14 complete bars
-    assert hourly_atr(df, 14)["atr"].head(13).is_null().all()
+    assert decision_atr(df, cfg)["atr"].head(13).is_null().all()
+
+
+def test_4h_atr_uses_only_4h_bars_closed_by_t():
+    df, cfg = random_candles(80), LabelConfig(atr_timeframe="4h")
+    closed = START + timedelta(hours=64)  # a 4h bar closes here (bars start 00:00 UTC)
+    atr = atr_at(df, cfg, closed)
+    assert atr is not None
+    # t = 64h..67h all use the bar that closed at 64h; the 64h-68h bar is still forming
+    for h in range(4):
+        assert atr_at(df, cfg, closed + timedelta(hours=h)) == atr
+    # changing candles from 64h on (the forming bar and later) doesn't change those ATRs ...
+    shocked = shock_from(df, closed)
+    for h in range(4):
+        assert atr_at(shocked, cfg, closed + timedelta(hours=h)) == atr
+    # ... but does change the ATR once the next bar has closed (sanity: the shock is visible)
+    assert atr_at(shocked, cfg, closed + timedelta(hours=4)) != atr_at(df, cfg, closed + timedelta(hours=4))
+    # warm-up: 14 bars of 4h = 56h
+    assert atr_at(df, cfg, START + timedelta(hours=55)) is None
+    assert atr_at(df, cfg, START + timedelta(hours=56)) is not None
+
+
+def test_taker_scenario_reproduces_stored_net_r_exactly():
+    labels, _ = build_labels(
+        random_candles(80, seed=1), funding((300, 0.0001), (780, -0.0002)), LabelConfig()
+    )
+    assert labels.height > 100
+    assert (scenario_net_r(labels, LabelConfig(), "taker") == labels["net_R"]).all()
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ({3: (100, 121, 99, 118)}, 2.0 - 0.0002 * (100 + 120) / 10),  # maker entry + maker tp, no slippage
+        (
+            {2: (100, 101, 89, 92)},
+            -1.0 - (0.0002 * 100 + (0.0005 + 0.0002) * 90) / 10,
+        ),  # maker entry, taker stop
+        ({5: (100, 106, 99, 105)}, 0.5 - (0.0002 * 100 + (0.0005 + 0.0002) * 105) / 10),  # taker expiry
+    ],
+    ids=["tp", "sl", "expiry"],
+)
+def test_maker_entry_tp_scenario(path, expected):
+    decisions = pl.DataFrame({"decision_time": [T], "atr": [ATR]}).with_columns(
+        pl.col("decision_time").cast(pl.Datetime("ms", "UTC"))
+    )
+    labels, _ = label_trades(candles(path), funding(), decisions, CFG)
+    long = labels.filter(pl.col("side") == "long")
+    assert scenario_net_r(long, CFG, "maker_entry_tp")[0] == pytest.approx(expected)
+
+
+def test_unknown_cost_scenario_raises():
+    with pytest.raises(ValueError, match="unknown cost scenario"):
+        scenario_net_r(pl.DataFrame(), CFG, "free")
 
 
 def test_short_mirrors_long_on_flipped_path():
