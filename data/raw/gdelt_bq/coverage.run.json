@@ -1,0 +1,15 @@
+{
+  "what": "coverage",
+  "date_range": [
+    "2020-09-01",
+    "2026-10-26"
+  ],
+  "sql": "SELECT DATE, COUNT(*) AS n_rows\nFROM `gdelt-bq.gdeltv2.gkg_partitioned`\nWHERE _PARTITIONTIME >= TIMESTAMP('2020-08-31')\n  AND _PARTITIONTIME < TIMESTAMP('2026-10-27')\n  AND DATE >= 20200901000000 AND DATE < 20261026000000\nGROUP BY DATE",
+  "job_id": "97fb5cf5-f0a5-4ef5-9a1e-261713d6ed8a",
+  "location": "US",
+  "job_created": "2026-10-26T19:17:27.805000+00:00",
+  "job_ended": "2026-10-26T19:17:35.238000+00:00",
+  "bytes_processed": 5767904992,
+  "bytes_billed": 5768216576,
+  "rows": 210459
+}

@@ -133,3 +133,77 @@ Notes:
 - **Set B's smaller loss is mechanical, not an edge.** Costs are fixed in bps, and the R unit doubles with the 4h ATR, so costs in R roughly halve (0.218 → 0.098). Gross_R is ≈ 0 in both sets. Compare models within a label set, never across sets by R.
 - **Set B is close to a fixed-horizon label:** 85% of trades expire, and TP is hit ~2% of the time. Its `label` mostly reflects the sign of the 4h return net of costs.
 - **`maker_entry_tp` cuts costs by ~40%** for both sets. It stays an upper bound, because limit-order fills aren't modeled.
+
+## Phase 1 step 3: GDELT news backfill via BigQuery (2026-10-26/27)
+
+`uv run python -m mbpe.sources.gdelt_bq {schema|dry-run|run|report|coverage}`. Data is in `data/raw/gdelt_bq/<year>.parquet` (140 MB). Run records are in `data/raw/gdelt_bq/<year>.run.json` (committed), each with the exact SQL, job ID, timings, bytes and row count. Credentials come from local gcloud Application Default Credentials (project `nifty-seat-461917-i4`); nothing credential-related is in the repo.
+
+**Query:**
+- **Table:** `gdelt-bq.gdeltv2.gkg_partitioned`. The schema was checked first: `DATE` is INTEGER; `SourceCommonName`, `DocumentIdentifier`, `V2Tone`, `Extras`, `V2Themes` and `TranslationInfo` are STRING.
+- **Columns returned:** `DATE`, `SourceCommonName`, `DocumentIdentifier`, `V2Tone`, plus `title` extracted in SQL from `Extras`, and `keywords`, the list of keywords each row matched.
+- **Filters:** English-source rows only (empty `TranslationInfo`), and a partition filter per year.
+- **V2Themes is excluded.** Full-range dry runs were 486.3 GB without it and 1,254.0 GB with it, over the 900 GB budget. This is noted in SCOPE.md.
+
+**Runs:** one job per calendar year, each run exactly once.
+
+| Year | Range | Rows | GB processed | Job time | Download |
+|---|---|---|---|---|---|
+| 2020 | 2020-09-01 → 2021-01-01 | 27,718 | 21.6 | 3 s | 23 s |
+| 2021 | full year | 238,422 | 72.9 | 7 s | 206 s |
+| 2022 | full year | 377,705 | 64.2 | 6 s | 310 s |
+| 2023 | full year | 427,415 | 103.8 | 5 s | 324 s |
+| 2024 | full year | 371,799 | 89.5 | 5 s | 296 s |
+| 2025 | full year | 254,312 | 77.4 | 5 s | 198 s |
+| 2026 | 2026-01-01 → 2026-10-26 | 188,167 | 58.8 | 4 s | 141 s |
+| **Total** | | **1,885,538** | **488.1** | | ~25 min |
+
+Plus one coverage query (all GKG rows per 15-min batch, reading only `DATE`): 5.8 GB. **Total processed across all runs: 493.8 GB**, inside the 1 TB monthly free allowance. Billed bytes equal the estimates.
+
+### Rows per year and keyword (a row can match several keywords; 1.16 on average)
+| Year | bitcoin | btc | crypto | cryptocurrency | stablecoin | tether | binance | coinbase | spot_etf | sec_crypto | federal_reserve | fomc | cpi | inflation | interest_rate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2020 | 8,436 | 1,169 | 3,791 | 3,632 | 288 | 150 | 306 | 458 | 0 | 234 | 1,622 | 221 | 1,085 | 6,617 | 3,114 |
+| 2021 | 64,996 | 4,099 | 44,888 | 38,791 | 1,605 | 568 | 3,634 | 4,954 | 78 | 1,564 | 5,890 | 1,404 | 5,360 | 82,781 | 12,392 |
+| 2022 | 35,564 | 2,890 | 70,135 | 30,119 | 2,269 | 806 | 5,143 | 4,310 | 174 | 2,407 | 10,004 | 1,615 | 8,616 | 207,112 | 38,306 |
+| 2023 | 64,058 | 10,968 | 87,815 | 26,532 | 4,673 | 2,297 | 15,649 | 10,825 | 3,266 | 8,071 | 14,799 | 2,127 | 13,853 | 173,147 | 62,837 |
+| 2024 | 83,995 | 12,802 | 69,188 | 24,326 | 3,627 | 2,160 | 7,946 | 5,997 | 5,030 | 5,600 | 16,724 | 1,885 | 13,222 | 139,093 | 53,111 |
+| 2025 | 48,489 | 10,221 | 62,124 | 19,854 | 8,804 | 1,366 | 3,307 | 4,563 | 434 | 2,336 | 19,743 | 1,579 | 9,572 | 79,955 | 31,662 |
+| 2026 | 28,325 | 5,225 | 42,553 | 10,200 | 5,231 | 837 | 2,493 | 2,609 | 218 | 855 | 13,883 | 981 | 8,826 | 77,274 | 22,442 |
+
+`inflation` is the largest bucket: 2022 alone has 207k rows. Macro keywords make up most of the rows, so features should be built per keyword group (crypto vs macro), not on the pooled count.
+
+**Empty titles:** 0.06–0.36% of rows per year (highest in 2025). Title extraction works.
+
+### `bitcoin` per day vs the DOC API (FEASIBILITY.md)
+| | BigQuery (title/URL, English sources) | DOC API (full text, `sourcelang:english`) |
+|---|---|---|
+| Median per day | 120 | 305 |
+| Max per day | 1,597 (2024-12-05, BTC crossing $100k) | 1,955 (2021-05-13) |
+| Days > 250 | 313 | 1,318 |
+
+These are lower, as expected: title/URL matching versus full text.
+
+### GDELT coverage and outages
+The coverage query counts all GKG rows per 15-min batch. A batch with zero rows is a **GDELT outage**; a batch with rows but no keyword match is just **quiet**.
+
+| Year | 15-min slots | Outage (no GKG rows) | Present, no keyword match |
+|---|---|---|---|
+| 2020 (Sep–Dec) | 11,711 | **22.3%** | 14.1% |
+| 2021 | 35,040 | 1.9% | 6.1% |
+| 2022 | 35,040 | 0.08% | 2.1% |
+| 2023 | 35,040 | 0.5% | 2.1% |
+| 2024 | 35,136 | 0.01% | 3.2% |
+| 2025 | 35,040 | **4.8%** | 4.9% |
+| 2026 | 28,513 | 0.02% | 6.3% |
+
+- **Days with zero matched rows:** 2025-06-15 → 2025-07-01 (17 days). This is a real GDELT outage: **2025-06-14 18:00 → 2025-07-02 02:00 UTC, 1,665 consecutive empty batches**.
+- **Other long outages:**
+  - 2023-03-22 04:45 → 03-23 14:30 (136 batches);
+  - **Oct–Nov 2020:** almost nightly outages ending around 07:00 UTC, the longest 88 batches; 63% of batches missing between Oct 15 and Nov 17;
+  - mid-August 2021.
+
+  In total there are 562 outage runs, 85 of them ≥ 2 h.
+- **The final 6-month holdout (from 2026-04-26) is effectively clean** (0.02% outage in 2026).
+- **Implications for the feature step:**
+  - Coverage comes from `coverage.parquet`, per the SCOPE.md rule: outage batches mean no data, not no news.
+  - 2020 has 22% outages, so news features there are unreliable. **Decision needed:** start the news ablation from 2021-01-01, or keep 2020 with the coverage flag.

@@ -1,0 +1,17 @@
+{
+  "year": 2025,
+  "date_range": [
+    "2025-01-01",
+    "2026-01-01"
+  ],
+  "sql": "WITH base AS (\n  SELECT DATE, SourceCommonName, DocumentIdentifier, V2Tone,\n    REGEXP_EXTRACT(Extras, r'<PAGE_TITLE>(.*?)</PAGE_TITLE>') AS title\n  FROM `gdelt-bq.gdeltv2.gkg_partitioned`\n  WHERE _PARTITIONTIME >= TIMESTAMP('2024-12-31')\n    AND _PARTITIONTIME < TIMESTAMP('2026-01-02')\n    AND DATE >= 20250101000000 AND DATE < 20260101000000\n    AND (TranslationInfo IS NULL OR TranslationInfo = '')\n), normed AS (\n  SELECT *, CONCAT(' ', TRIM(REGEXP_REPLACE(\n    LOWER(CONCAT(IFNULL(title, ''), ' ', IFNULL(DocumentIdentifier, ''))), r'[^a-z0-9]+', ' ')), ' ') AS t\n  FROM base\n), tagged AS (\n  SELECT * EXCEPT (t), ARRAY(SELECT k FROM UNNEST([\n      IF(REGEXP_CONTAINS(t, r' bitcoins? '), 'bitcoin', NULL),\n      IF(REGEXP_CONTAINS(t, r' btc '), 'btc', NULL),\n      IF(REGEXP_CONTAINS(t, r' cryptos? '), 'crypto', NULL),\n      IF(REGEXP_CONTAINS(t, r' cryptocurrenc(?:y|ies) '), 'cryptocurrency', NULL),\n      IF(REGEXP_CONTAINS(t, r' stablecoins? '), 'stablecoin', NULL),\n      IF(REGEXP_CONTAINS(t, r' tether '), 'tether', NULL),\n      IF(REGEXP_CONTAINS(t, r' binance '), 'binance', NULL),\n      IF(REGEXP_CONTAINS(t, r' coinbase '), 'coinbase', NULL),\n      IF(REGEXP_CONTAINS(t, r' spot (?:bitcoin |btc |ether |ethereum |crypto )?etfs? '), 'spot_etf', NULL),\n      IF(REGEXP_CONTAINS(t, r' federal reserve '), 'federal_reserve', NULL),\n      IF(REGEXP_CONTAINS(t, r' fomc '), 'fomc', NULL),\n      IF(REGEXP_CONTAINS(t, r' cpi '), 'cpi', NULL),\n      IF(REGEXP_CONTAINS(t, r' inflation '), 'inflation', NULL),\n      IF(REGEXP_CONTAINS(t, r' interest rates? '), 'interest_rate', NULL),\n      IF(REGEXP_CONTAINS(t, r' sec ') AND REGEXP_CONTAINS(t, r' (?:bitcoins?|cryptos?|cryptocurrenc(?:y|ies)) '), 'sec_crypto', NULL)\n    ]) AS k WHERE k IS NOT NULL) AS keywords\n  FROM normed\n)\nSELECT * FROM tagged WHERE ARRAY_LENGTH(keywords) > 0",
+  "job_id": "58fa3b40-d4d3-4de5-8b04-de1acef61873",
+  "location": "US",
+  "job_created": "2026-10-26T19:09:42.008000+00:00",
+  "job_ended": "2026-10-26T19:09:47.191000+00:00",
+  "job_runtime_s": 5.008,
+  "download_s": 198.4,
+  "bytes_processed": 77403598114,
+  "bytes_billed": 77403783168,
+  "rows": 254312
+}
