@@ -1,0 +1,200 @@
+"""Binance public-archive adapter (data.binance.vision), BTCUSDT only.
+
+fetch_history() mirrors raw zip files under data/raw/binance/<same path as the archive>.
+It is resumable (files already stored are skipped) and verifies each zip against its
+.CHECKSUM file when Binance publishes one. Raw files are written once and never modified.
+
+read_raw() / parse_csv() turn one raw file into a typed polars DataFrame with UTC timestamps.
+"""
+
+import hashlib
+import http.client
+import io
+import time
+import urllib.error
+import urllib.request
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import date, timedelta
+from pathlib import Path
+
+import polars as pl
+
+BASE = "https://data.binance.vision/data"
+RAW_ROOT = Path("data/raw/binance")
+UA = {"User-Agent": "mbpe/0.1"}
+UTC_MS = pl.Datetime("ms", "UTC")
+
+
+@dataclass(frozen=True)
+class Dataset:
+    path: str  # archive path relative to BASE; {p} = day (YYYY-MM-DD) or month (YYYY-MM)
+    monthly: bool
+    ts_col: str
+    step: timedelta  # nominal spacing between rows
+    columns: dict  # raw CSV columns -> polars dtype, in file order
+
+
+KLINE_COLUMNS = {
+    "open_time": pl.Int64,
+    "open": pl.Float64,
+    "high": pl.Float64,
+    "low": pl.Float64,
+    "close": pl.Float64,
+    "volume": pl.Float64,
+    "close_time": pl.Int64,
+    "quote_volume": pl.Float64,
+    "count": pl.Int64,
+    "taker_buy_volume": pl.Float64,
+    "taker_buy_quote_volume": pl.Float64,
+    "ignore": pl.String,
+}
+
+DATASETS = {
+    "futures_klines_1m": Dataset(
+        "futures/um/daily/klines/BTCUSDT/1m/BTCUSDT-1m-{p}.zip",
+        False,
+        "open_time",
+        timedelta(minutes=1),
+        KLINE_COLUMNS,
+    ),
+    "spot_klines_1m": Dataset(
+        "spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-{p}.zip",
+        False,
+        "open_time",
+        timedelta(minutes=1),
+        KLINE_COLUMNS,
+    ),
+    "funding": Dataset(
+        "futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-{p}.zip",
+        True,
+        "calc_time",
+        timedelta(hours=8),
+        {"calc_time": pl.Int64, "funding_interval_hours": pl.Int64, "last_funding_rate": pl.Float64},
+    ),
+    "metrics": Dataset(
+        "futures/um/daily/metrics/BTCUSDT/BTCUSDT-metrics-{p}.zip",
+        False,
+        "create_time",
+        timedelta(minutes=5),
+        {
+            "create_time": pl.String,
+            "symbol": pl.String,
+            "sum_open_interest": pl.Float64,
+            "sum_open_interest_value": pl.Float64,
+            "count_toptrader_long_short_ratio": pl.Float64,
+            "sum_toptrader_long_short_ratio": pl.Float64,
+            "count_long_short_ratio": pl.Float64,
+            "sum_taker_long_short_vol_ratio": pl.Float64,
+        },
+    ),
+}
+DROP_COLUMNS = ["ignore", "symbol"]  # constant / unused
+
+
+def periods(name: str, start: date, end: date) -> list[str]:
+    days = [start + timedelta(n) for n in range((end - start).days + 1)]
+    if DATASETS[name].monthly:
+        return sorted({d.strftime("%Y-%m") for d in days})
+    return [d.isoformat() for d in days]
+
+
+def raw_path(name: str, period: str, root: Path = RAW_ROOT) -> Path:
+    return root / DATASETS[name].path.format(p=period)
+
+
+def raw_files(name: str, root: Path = RAW_ROOT) -> list[Path]:
+    return sorted(root.glob(DATASETS[name].path.format(p="*")))
+
+
+# ---------- download ----------
+
+
+def _get(url: str) -> bytes | None:
+    """GET with retries on transient errors; None on 404 (not published, or not published yet)."""
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if attempt == 3:
+                raise
+        except (urllib.error.URLError, TimeoutError, http.client.HTTPException):
+            if attempt == 3:
+                raise
+        time.sleep(2 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _fetch_one(name: str, period: str, root: Path) -> Path | None:
+    dest = raw_path(name, period, root)
+    if dest.exists():  # written only after verification, so existing == complete
+        return dest
+    url = f"{BASE}/{DATASETS[name].path.format(p=period)}"
+    for attempt in range(3):
+        blob = _get(url)
+        if blob is None:
+            return None
+        checksum = _get(url + ".CHECKSUM")
+        if checksum is None or hashlib.sha256(blob).hexdigest() == checksum.split()[0].decode():
+            break
+        if attempt == 2:
+            raise ValueError(f"checksum mismatch after 3 downloads: {url}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if checksum is not None:
+        _write_atomic(dest.with_name(dest.name + ".CHECKSUM"), checksum)
+    _write_atomic(dest, blob)  # zip last: its presence marks a complete, verified download
+    return dest
+
+
+def fetch_history(name: str, start: date, end: date, root: Path = RAW_ROOT, workers: int = 16) -> list[Path]:
+    """Download every file of `name` between start and end (inclusive) not already stored.
+
+    Returns the stored raw files for that range. Periods Binance hasn't published are skipped.
+    """
+    with ThreadPoolExecutor(workers) as ex:
+        paths = ex.map(lambda p: _fetch_one(name, p, root), periods(name, start, end))
+        return [p for p in paths if p is not None]
+
+
+# ---------- parse ----------
+
+
+def _epoch_ms(col: str) -> pl.Expr:
+    c = pl.col(col)
+    # spot klines switched from millisecond to microsecond timestamps on 2025-01-01
+    return pl.when(c > 10**14).then(c // 1000).otherwise(c).cast(UTC_MS)
+
+
+def parse_csv(name: str, data: bytes) -> pl.DataFrame:
+    ds = DATASETS[name]
+    if data[:1] and not data[:1].isdigit():  # header row present (newer files) -> skip it
+        data = data.split(b"\n", 1)[1] if b"\n" in data else b""
+    if not data.strip():
+        df = pl.DataFrame(schema=ds.columns)
+    else:
+        df = pl.read_csv(io.BytesIO(data), has_header=False, schema=ds.columns)
+    if name == "metrics":
+        df = df.with_columns(
+            pl.col("create_time")
+            .str.strptime(pl.Datetime("ms"), "%Y-%m-%d %H:%M:%S")
+            .dt.replace_time_zone("UTC")
+        )
+    else:
+        times = [c for c in ("open_time", "close_time", "calc_time") if c in df.columns]
+        df = df.with_columns(_epoch_ms(c) for c in times)
+    return df.drop([c for c in DROP_COLUMNS if c in df.columns])
+
+
+def read_raw(name: str, path: Path) -> pl.DataFrame:
+    with zipfile.ZipFile(path) as z:
+        return parse_csv(name, z.read(z.namelist()[0]))

@@ -1,0 +1,28 @@
+[project]
+name = "mbpe"
+version = "0.1.0"
+requires-python = "~=3.12.0"
+dependencies = [
+    "numpy>=2.5.4",
+    "pandera[polars]>=0.35.0",
+    "polars>=2.1.0",
+    "pydantic>=2.14.1",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 110
+extend-exclude = ["reference", "feasibility.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
