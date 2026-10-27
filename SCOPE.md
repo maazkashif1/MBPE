@@ -110,3 +110,21 @@ Registered before any modeling. **No further label or cost variants will be adde
 - **Months not yet in the Binance archive come from the public REST API** (`/fapi/v1/fundingRate`). Each clean row is tagged `source` = archive / rest.
 - **When the archive month appears, it must match the REST values exactly** (timestamps and rates), or the clean build fails. Checked on Sep 2026: 90/90 identical.
 - **Label building fails if a scheduled funding time (8 h UTC grid) inside a trade window has no funding data.** Missing funding is never treated as zero.
+
+## Macro event blackout (pre-registered evaluation rule, 2026-10-27)
+- **No trades whose window, from entry − 30 min to exit, contains a US CPI release or an FOMC policy statement.** The rule applies to every model, baseline and ablation rung alike.
+- **Event times:** `data/reference/macro_events.csv`, hand-maintained from the official BLS and Federal Reserve schedules. CPI is at 08:30 ET and FOMC statements at 14:00 ET, converted to UTC with daylight saving. It covers Sep 2020 → Dec 2026, including the scheduled upcoming events.
+- **Rescheduled events are noted in the file:**
+  - Sep 2025 CPI: Oct 15 → Oct 24, 2025;
+  - Oct 2025 CPI: cancelled;
+  - Nov 2025 CPI: Dec 10 → Dec 18, 2025;
+  - Jan 2026 CPI: Feb 11 → Feb 13, 2026.
+
+  The Aug 22, 2025 notation vote is listed but excluded (not a policy-rate statement).
+- **Known limitation:** the calendar uses the *actual* release times. For rescheduled events, the backtest knows the new time from the start, while in reality it was announced only days or weeks ahead. The calendar features (hours to next / since last event, event in the next 4 h) are therefore slightly optimistic around those 4 events. This is documented here, not corrected.
+
+## News and calendar features (Phase 2 step 3, 2026-10-27)
+- **Feature groups for the ablation:** `technical`, `derivatives`, `news` and `calendar` (CPI/FOMC timing). News and calendar are separate rungs.
+- **News features are computed per keyword group** (crypto, macro); a row with both counts in both.
+- **The sentiment model is `default_sentiment` in `config/news.yaml`** (FinBERT). Switching models is a config change plus a rebuild, not a code change.
+- **Sentiment and macro tone count each near-duplicate cluster once** (the mean of its titles available by t). Empty titles count toward volume only.

@@ -421,3 +421,127 @@ No model was found where the model, base model and training data are all clearly
 |---|---|---|---|
 | A (1h ATR) | 383 (193 long, 190 short) | 0.009 / 0.025 | 3 (short) |
 | B (4h ATR) | 530 (259 long, 271 short) | 0.004 / 0.011 | 3 (short) |
+
+## Phase 2 step 3: news and calendar features (2026-10-27)
+
+`uv run python -m mbpe.features.news` → `data/features/news.parquet`: **53,942 hourly decision times × 46 features** (43 `news`, 3 `calendar`). It uses FinBERT (`default_sentiment` in `config/news.yaml`) and builds in 75 s.
+
+### Inputs
+- **News rows:** backfill + live (`load_news_rows`), 1,886,217 rows.
+- **Dedup:** rerun on backfill + live (979,912 clusters, longest span 24.00 h).
+- **Sentiment:** FinBERT scores for **all 1,100,036 exact-unique titles** in `data/features/sentiment_finbert.parquet` (1 h 45 min on the Mac GPU, at times sharing it with dedup). CryptoBERT scoring runs into `sentiment_cryptobert.parquet`. The 200-sample scores stay in `data/labeling/`, out of view.
+- **Coverage table:** BigQuery + live batch metadata.
+- **Calendar:** `data/reference/macro_events.csv`.
+
+### Rules
+- **Availability:** a news row or coverage batch counts at t only if label + 15 min ≤ t. Windows are (t − W, t].
+- **Groups:** crypto / macro by keywords; a row with both counts in both.
+- **Coverage gate:** a window below 80% batch coverage makes all its features NaN, never 0. Rolling baselines skip missing values and need ≥ 80% (135 of 168 hourly values).
+- **Sentiment counts each cluster once:** the mean of its titles available by t, for clusters with a title in the window. Strongly negative means score < −0.5 (config). Empty titles count toward volume only.
+
+### Features
+- **`news` group, per keyword group G ∈ {crypto, macro}:**
+  - **Volume:** `news_G_articles_{1h,4h,24h}`, `news_G_new_clusters_{1h,4h,24h}`, and `news_G_count_z_4h` (4h count scaled to full coverage, vs the previous 168 hourly values).
+  - **Novelty:** `news_G_novelty_{1h,4h}`, the share of articles that start a new cluster.
+  - **Sentiment:** `news_G_sent_mean_W`, `news_G_sent_std_W`, `news_G_sent_neg_share_W` for W ∈ {1h, 4h, 24h}, plus `news_G_sent_change_4h_24h`.
+  - **Macro only:** `news_macro_tone_{4h,24h}` (GDELT tone, each cluster once).
+  - **Coverage:** `news_cov_{1h,4h,24h}`.
+- **`calendar` group:** `cal_hours_to_next_event`, `cal_hours_since_last_event`, `cal_event_next_4h` (US CPI or FOMC).
+
+**Average values since 2021:**
+- **Volume:** 16.3 crypto and 20.8 macro articles per hour.
+- **Novelty:** 69% of 4h crypto articles start a new cluster.
+- **4h sentiment:** crypto −0.003, macro −0.12.
+- **Strongly negative crypto clusters (4h):** 19%.
+- **Macro tone (4h):** −1.2.
+
+### Calendar (`data/reference/macro_events.csv`, committed)
+- **Contents:** 75 CPI releases (08:30 ET) and 51 FOMC statements (14:00 ET), Sep 2020 → Dec 2026 (upcoming ones marked `scheduled`), in UTC with daylight saving.
+- **Sources:** BLS CPI archive and schedule, the BLS 2025 lapse revised-dates page, and the Federal Reserve FOMC calendars.
+- **Rescheduled events (noted in the file):**
+  - Sep 2025 CPI: Oct 15 → **Oct 24**;
+  - Oct 2025 CPI: **cancelled**;
+  - Nov 2025 CPI: Dec 10 → **Dec 18**;
+  - Jan 2026 CPI: Feb 11 → **Feb 13**.
+
+  The Aug 22, 2025 notation vote is listed but excluded.
+- **Independent check:** every one of the 73 past CPI dates shows a ≥ 1.5× spike in GDELT "cpi" articles against the surrounding ±4 days, and 71 are the busiest day of that window.
+- **SCOPE.md (pre-registered):** no trades whose window from entry − 30 min to exit contains a CPI or FOMC release. Known limitation: actual (not originally announced) times are used.
+
+### Tests (`tests/test_news_features.py`, 9)
+- **Truncation:** at 200 random times + 7 around a synthetic outage, the full pipeline (causal dedup → prepare → features) on data truncated at t equals the full-data result, for every news and calendar feature.
+- **Late articles:** inserting articles labeled t and t + 15 min (copies of live stories and a new story) changes nothing at t.
+- **Synthetic outage:** NaN, not 0, with coverage reported as 0. Recovery follows the 80% rule; a 1-day outage leaves a 7-day baseline valid.
+- **Real mid-2025 outage:** all news features NaN, coverage 0; three days later the 1h–24h windows are back and the 7-day baseline is still NaN.
+- **Cluster-once sentiment:** 10 copies at +1 and 1 story at −1 give a mean of 0.
+- **Calendar:** feature values; the file is sorted and in UTC.
+- **Harness check:** a leaky feature (next-hour count) is caught and named.
+
+### How the outages show up
+- **2025-06-14 18:00 → 07-02 02:00 (17 days, no GKG at all):**
+  - 1h features NaN from 2025-06-12 19:00 (smaller gaps just before) to 07-02 03:00;
+  - 24h features NaN from 06-14 23:00 to 07-02 21:00;
+  - the 7-day count z-score NaN until **07-07 20:00**, when its baseline is 80% valid again;
+  - coverage is 0 throughout.
+- **2020:**
+
+  | 2020 | mean 24h coverage | 1h counts NaN | 24h counts NaN | 4h count z NaN |
+  |---|---|---|---|---|
+  | Sep | 0.94 | 7% | 12% | 33% (baseline warm-up) |
+  | Oct | 0.58 | 54% | 91% | 100% |
+  | Nov | 0.58 | 47% | 60% | 75% |
+  | Dec | 1.00 | 1% | 0% | 0% |
+
+  Per SCOPE, ablations start 2021-01-01.
+- **Since 2021:** count features are missing in 1.4% of hours. Genuinely quiet hours (covered, zero articles) are 0.6% (crypto) and 1.5% (macro) at 1h; they show as 0, not NaN.
+
+### Missing share per feature per year
+| feature | group | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | since 2021 |
+|---|---|---|---|---|---|---|---|---|---|
+| `news_cov_1h` | news | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `news_cov_4h` | news | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `news_cov_24h` | news | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `news_crypto_articles_1h` | news | 27.3% | 2.8% | 0.2% | 0.8% | <0.1% | 4.9% | <0.1% | 1.5% |
+| `news_crypto_new_clusters_1h` | news | 27.3% | 2.8% | 0.2% | 0.8% | <0.1% | 4.9% | <0.1% | 1.5% |
+| `news_crypto_sent_mean_1h` | news | 30.6% | 3.2% | 1.0% | 1.3% | 0.4% | 5.5% | 1.3% | 2.1% |
+| `news_crypto_sent_std_1h` | news | 36.0% | 5.1% | 3.2% | 2.5% | 1.5% | 7.2% | 4.5% | 4.0% |
+| `news_crypto_sent_neg_share_1h` | news | 30.6% | 3.2% | 1.0% | 1.3% | 0.4% | 5.5% | 1.3% | 2.1% |
+| `news_crypto_articles_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | 0 | 1.4% |
+| `news_crypto_new_clusters_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | 0 | 1.4% |
+| `news_crypto_sent_mean_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | <0.1% | 1.4% |
+| `news_crypto_sent_std_4h` | news | 28.4% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | <0.1% | 1.4% |
+| `news_crypto_sent_neg_share_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | <0.1% | 1.4% |
+| `news_crypto_articles_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_crypto_new_clusters_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_crypto_sent_mean_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_crypto_sent_std_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_crypto_sent_neg_share_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_crypto_novelty_1h` | news | 30.6% | 3.2% | 1.0% | 1.3% | 0.4% | 5.5% | 1.3% | 2.1% |
+| `news_crypto_novelty_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | <0.1% | 1.4% |
+| `news_crypto_sent_change_4h_24h` | news | 42.3% | 4.2% | 0.2% | 0.6% | 0 | 5.0% | <0.1% | 1.7% |
+| `news_crypto_count_z_4h` | news | 51.9% | 6.1% | 0.2% | 2.0% | 0 | 6.4% | 0 | 2.5% |
+| `news_macro_articles_1h` | news | 27.3% | 2.8% | 0.2% | 0.8% | <0.1% | 4.9% | <0.1% | 1.5% |
+| `news_macro_new_clusters_1h` | news | 27.3% | 2.8% | 0.2% | 0.8% | <0.1% | 4.9% | <0.1% | 1.5% |
+| `news_macro_sent_mean_1h` | news | 34.9% | 7.0% | 0.4% | 1.1% | 0.6% | 6.7% | 2.3% | 3.0% |
+| `news_macro_sent_std_1h` | news | 47.1% | 14.7% | 1.0% | 2.0% | 2.5% | 11.3% | 7.5% | 6.5% |
+| `news_macro_sent_neg_share_1h` | news | 34.9% | 7.0% | 0.4% | 1.1% | 0.6% | 6.7% | 2.3% | 3.0% |
+| `news_macro_articles_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | 0 | 1.4% |
+| `news_macro_new_clusters_4h` | news | 28.3% | 2.5% | 0.2% | 0.5% | 0 | 4.8% | 0 | 1.4% |
+| `news_macro_sent_mean_4h` | news | 28.5% | 2.6% | 0.2% | 0.5% | 0 | 4.9% | <0.1% | 1.4% |
+| `news_macro_sent_std_4h` | news | 29.6% | 3.1% | 0.2% | 0.5% | 0 | 5.0% | <0.1% | 1.5% |
+| `news_macro_sent_neg_share_4h` | news | 28.5% | 2.6% | 0.2% | 0.5% | 0 | 4.9% | <0.1% | 1.4% |
+| `news_macro_articles_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_macro_new_clusters_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_macro_sent_mean_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_macro_sent_std_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_macro_sent_neg_share_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `news_macro_novelty_1h` | news | 34.9% | 7.0% | 0.4% | 1.1% | 0.6% | 6.7% | 2.2% | 3.0% |
+| `news_macro_novelty_4h` | news | 28.5% | 2.6% | 0.2% | 0.5% | 0 | 4.9% | <0.1% | 1.4% |
+| `news_macro_sent_change_4h_24h` | news | 42.3% | 4.4% | 0.2% | 0.6% | 0 | 5.0% | <0.1% | 1.8% |
+| `news_macro_count_z_4h` | news | 51.9% | 6.1% | 0.2% | 2.0% | 0 | 6.4% | 0 | 2.5% |
+| `news_macro_tone_4h` | news | 28.5% | 2.6% | 0.2% | 0.5% | 0 | 4.9% | <0.1% | 1.4% |
+| `news_macro_tone_24h` | news | 40.6% | 3.6% | <0.1% | 0.6% | 0 | 4.9% | 0 | 1.6% |
+| `cal_hours_to_next_event` | calendar | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `cal_hours_since_last_event` | calendar | 8.6% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `cal_event_next_4h` | calendar | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+**Only one feature is more than 5% missing since 2021-01-01: `news_macro_sent_std_1h` (6.5%).** A standard deviation needs ≥ 2 scored macro clusters in the hour, and quiet hours (mostly 2021 nights) often have 0–1; the coverage gaps add to this. The 1h macro mean, negative share and novelty are 2–7% missing in some years for the same reason (no scored macro cluster in the hour). The 2020 values reflect the outages above.

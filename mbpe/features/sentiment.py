@@ -3,6 +3,7 @@
 Usage:
   uv run python -m mbpe.features.sentiment sample         # labeling/sample.csv (+ private key in data/)
   uv run python -m mbpe.features.sentiment score-sample   # both models on the 200 sample titles + throughput
+  uv run python -m mbpe.features.sentiment score-all      # every unique title, every model (incremental)
 
 Per title: p_pos, p_neg, p_neu and score = p_pos - p_neg. Models load safetensors weights only.
 Labels are mapped by name: positive/bullish -> pos, negative/bearish -> neg, neutral -> neu.
@@ -126,6 +127,56 @@ def score_titles(rows: pl.DataFrame, scorer: Scorer) -> pl.DataFrame:
     return keyed.join(scores, on="norm", how="left")
 
 
+SCORES_DIR = Path("data/features")
+CHUNK = 50_000
+
+
+def scores_path(model: str) -> Path:
+    return SCORES_DIR / f"sentiment_{model}.parquet"
+
+
+def unique_titles(rows: pl.DataFrame) -> pl.DataFrame:
+    """One row per exact-unique non-empty normalized title: norm, and the clean title of its earliest row."""
+    return (
+        rows.with_columns(norm=pl.col("title").map_elements(normalize_title, return_dtype=pl.String))
+        .filter(pl.col("norm") != "")
+        .sort("DATE", "DocumentIdentifier")
+        .group_by("norm", maintain_order=True)
+        .agg(pl.col("title").first())
+        .select("norm", text=pl.col("title").map_elements(clean_title, return_dtype=pl.String))
+    )
+
+
+def score_all(cfg: NewsConfig) -> None:
+    """Score every exact-unique normalized title with every configured model (data/features/sentiment_*).
+
+    Incremental and resumable: titles already in a model's file are skipped, progress is saved every CHUNK
+    titles. Keyed by `norm`.
+    """
+    from mbpe.sources.gdelt_live import load_news_rows
+
+    titles = unique_titles(load_news_rows())
+    print(f"{titles.height:,} unique titles", flush=True)
+    for name, model_name in cfg.sentiment_models.items():
+        out = scores_path(name)
+        done = pl.read_parquet(out) if out.exists() else None
+        todo = titles if done is None else titles.join(done.select("norm"), on="norm", how="anti")
+        print(f"{name}: {0 if done is None else done.height:,} scored, {todo.height:,} to go", flush=True)
+        if not todo.height:
+            continue
+        scorer = Scorer(model_name, cfg.device, cfg.batch_size)
+        t0 = time.perf_counter()
+        for i in range(0, todo.height, CHUNK):
+            part = todo.slice(i, CHUNK)
+            scored = pl.concat([part.select("norm"), scorer.score(part["text"].to_list())], how="horizontal")
+            done = scored if done is None else pl.concat([done, scored])
+            tmp = out.with_name(out.name + ".part")
+            done.write_parquet(tmp)
+            tmp.replace(out)
+            rate = (i + part.height) / (time.perf_counter() - t0)
+            print(f"{name}: {i + part.height:,}/{todo.height:,} ({rate:.0f} titles/s)", flush=True)
+
+
 def score_sample(cfg: NewsConfig) -> None:
     titles = pl.read_csv(SAMPLE_CSV)
     results, timing = [], []
@@ -144,7 +195,11 @@ def score_sample(cfg: NewsConfig) -> None:
 
 
 if __name__ == "__main__":
-    {"sample": write_sample, "score-sample": lambda: score_sample(load_news_config())}[sys.argv[1]]()
+    {
+        "sample": write_sample,
+        "score-sample": lambda: score_sample(load_news_config()),
+        "score-all": lambda: score_all(load_news_config()),
+    }[sys.argv[1]]()
 
 
 __all__ = ["Scorer", "make_sample", "normalize_title", "score_titles"]

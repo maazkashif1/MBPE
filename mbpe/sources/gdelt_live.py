@@ -220,6 +220,39 @@ def update_gaps(latest: datetime, root: Path = LIVE) -> int:
     return len(gaps)
 
 
+def load_news_rows(live_root: Path = LIVE) -> pl.DataFrame:
+    """All news rows in BACKFILL_SCHEMA: BigQuery backfill + live batches.
+
+    One row per (DATE, DocumentIdentifier); where backfill and live overlap the backfill row is kept (parity
+    showed them identical).
+    """
+    from mbpe.sources.gdelt_bq import OUT
+
+    frames = [pl.read_parquet(f) for f in sorted(OUT.glob("[0-9]*.parquet"))]
+    frames += [
+        pl.read_parquet(f).select(BACKFILL_SCHEMA.names()) for f in sorted(live_root.glob("*/[0-9]*.parquet"))
+    ]
+    return pl.concat(frames).unique(["DATE", "DocumentIdentifier"], keep="first", maintain_order=True)
+
+
+def load_coverage(live_root: Path = LIVE) -> pl.DataFrame:
+    """GKG rows per 15-min batch (DATE, n_rows): BigQuery coverage table + live batch metadata.
+
+    Backfill counts are all languages, live counts English only; only zero vs non-zero matters (outage).
+    A batch absent from this table is missing.
+    """
+    from mbpe.sources.gdelt_bq import OUT
+
+    bq = pl.read_parquet(OUT / "coverage.parquet").select("DATE", "n_rows")
+    live = [json.loads(p.read_text()) for p in sorted(live_root.glob("*/[0-9][0-9][0-9][0-9].json"))]
+    lv = (
+        pl.DataFrame([{"DATE": m["DATE"], "n_rows": m["n_rows"]} for m in live], schema=bq.schema)
+        if live
+        else bq.head(0)
+    )
+    return pl.concat([bq, lv]).unique("DATE", keep="first").sort("DATE")
+
+
 def lag_report(root: Path = LIVE) -> pl.DataFrame:
     """Per newest-batch fetch: fetched_at - label and publish time - label (catch-up fetches excluded)."""
     metas = [json.loads(p.read_text()) for p in sorted(root.glob("*/[0-9][0-9][0-9][0-9].json"))]

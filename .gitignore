@@ -6,6 +6,7 @@ __pycache__/
 data/**
 !data/**/
 !data/raw/gdelt_bq/*.run.json
+!data/reference/*.csv
 
 # credentials: never commit
 .env

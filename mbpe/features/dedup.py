@@ -28,7 +28,7 @@ import polars as pl
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from mbpe.sources.gdelt_bq import AVAILABILITY_LAG, OUT, batch_time
+from mbpe.sources.gdelt_bq import AVAILABILITY_LAG, batch_time
 
 NEWS_CONFIG = Path("config/news.yaml")
 DEDUP_PATH = Path("data/features/news_dedup.parquet")
@@ -43,7 +43,9 @@ class NewsConfig(BaseModel):
     dedup_cluster_max_hours: int = Field(24, gt=0)
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     sentiment_models: dict[str, str] = {"finbert": "ProsusAI/finbert"}
-    default_sentiment: str = "finbert"
+    default_sentiment: str = "finbert"  # the sentiment model the news features use
+    strong_negative_threshold: float = -0.5  # a cluster's mean score below this counts as strongly negative
+    min_coverage: float = Field(0.8, gt=0, le=1)  # news windows / baselines below this batch coverage -> NaN
     device: str = "cpu"
     batch_size: int = 64
 
@@ -196,7 +198,9 @@ def main() -> None:
     import time
 
     cfg = load_news_config()
-    rows = pl.concat([pl.read_parquet(f) for f in sorted(OUT.glob("[0-9]*.parquet"))])
+    from mbpe.sources.gdelt_live import load_news_rows
+
+    rows = load_news_rows()  # backfill + live batches
     t0 = time.perf_counter()
     out = dedup(rows, embedder(cfg), cfg)
     elapsed = time.perf_counter() - t0
