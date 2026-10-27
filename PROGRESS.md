@@ -249,3 +249,58 @@ The 96 English GKG files of a day went through the live parser and were compared
 - news features are NaN where coverage is missing; rolling baselines skip missing batches and need ≥ 80% coverage;
 - empty-title rows count toward volume but not sentiment;
 - availability is label + 15 min.
+
+## Phase 2 step 1: headline dedup and sentiment scoring setup (2026-10-27)
+
+Nothing in the full backfill has been scored yet.
+
+### Hand-labeling sample (`labeling/`)
+- **`sample.csv`:** 200 distinct headlines, stratified 2021–2026 × keyword group (crypto = any crypto keyword, else macro), 16–17 per stratum, seed 20261027, shuffled. Columns are `id, title, label`. Titles are decoded and stripped of outlet names, and there are no dates, sources or keywords.
+- **The key is kept out of the repo:** ids → DATE / URL / source / keywords are in `data/labeling/sample_key.parquet`, and the model scores are in `data/labeling/sample_scores.parquet`. Both are git-ignored, so neither can bias the labels.
+- **`GUIDE.md`:** label financial-news tone (positive / negative / neutral), not the expected BTC price impact; 3 invented examples per label.
+
+### Dedup (`mbpe/features/dedup.py`, `config/news.yaml`)
+- **Title normalization:** HTML entities decoded (twice, for `&amp;amp;`), whitespace collapsed, a trailing outlet segment stripped (` | `, ` - `, ` – `, ` — ` followed by ≤ 4 words, with ≥ 3 words left), lowercased.
+- **Matching:** online and causal; rows go in batch-time order. A row joins the cluster of its most similar earlier row within 24 h (MiniLM-L6-v2 cosine ≥ **0.85**), but **only if that cluster's first member is ≤ 24 h older**, so later developments start a new cluster. Exact duplicates share an embedding (similarity 1) and always join first. Empty titles stay singletons.
+- **A cluster's availability** is its earliest member's batch time + 15 min. Later copies add volume only. **Clusters are used only for counting and novelty features.**
+
+**Full-backfill result** (8.5 min on the Mac GPU), with the 24 h cap:
+
+| | |
+|---|---|
+| Rows → clusters | 1,885,538 → **979,493** (1.93 per cluster) |
+| Size 1 / 2 / 3–5 / 6–10 / 11–50 / > 50 | 759,512 / 121,474 / 66,319 / 16,965 / 12,145 / 3,078 |
+| Largest cluster | 644 rows |
+| **Longest span (first → last member)** | **24.00 h** (the cap); 44,276 clusters span > 12 h |
+
+Before the cap (uncapped chaining): 966,155 clusters, the largest 762 rows (El Salvador bitcoin law) spanning 139 h, and 26 clusters longer than 7 days.
+
+`labeling/dedup_review.md` lists 20 random clusters with a join at similarity 0.85–0.88 for review. All 20 looked like the same story in the first run.
+
+### Sentiment scoring (`mbpe/features/sentiment.py`)
+- **What gets scored:** **every exact-unique normalized title is scored once** (the clean title of its earliest row), and scores map back to all rows with that title. Empty titles are never scored. There are 1,099,612 unique titles.
+- **Output:** `p_pos`, `p_neg`, `p_neu`, `score = p_pos − p_neg`. Weights load as safetensors only.
+- **Models:** ProsusAI/finbert (default) and ElKulako/cryptobert, whose classes Bullish / Bearish / Neutral map to pos / neg / neu.
+
+| Model | Device | Titles/s (200-headline sample) | Full run estimate (1,099,612 titles) |
+|---|---|---|---|
+| FinBERT | MPS (Apple GPU) | 219 | ~84 min |
+| CryptoBERT | MPS | 301 | ~61 min |
+| FinBERT | CPU | 31 | ~10 h |
+
+- **CPU vs GPU, FinBERT, 200 headlines:** max |Δ score| = **6.0 × 10⁻⁶** (max |Δp| 5.2 × 10⁻⁶), no change in the top label.
+- **Determinism:** two runs on the GPU give identical outputs for both models (tested).
+
+### Model licenses (report only; no switch)
+| Model | Model license | Training data (declared license) | Notes |
+|---|---|---|---|
+| ProsusAI/finbert (in use) | **CC-BY-NC-SA-4.0** (non-commercial) | Financial PhraseBank (CC-BY-NC-SA-3.0) | Fine for research; not for commercial use |
+| ElKulako/cryptobert (in use) | **MIT** | `ElKulako/stocktwits-crypto` (MIT tag) for the classifier head; pretraining also on Telegram, Reddit and Twitter posts; base `vinai/bertweet-base` (MIT) | The data are scraped StockTwits/Reddit/Twitter posts (Nov 2021 – Jun 2022); the MIT tag is the uploader's, and the platforms' terms may still apply. Trained on bullish/bearish *social posts*, not news tone |
+| StephanAkkerman/FinTwitBERT-sentiment | **MIT** | Fine-tune: `TimKoornstra/financial-tweets-sentiment` + `…/synthetic-financial-tweets-sentiment` (both MIT). Pretraining: StephanAkkerman tweet datasets (CC-BY-4.0, MIT) | **Base `yiyanghkust/finbert-pretrain` declares no license**, so the chain isn't fully clear. Tweets, not headlines |
+| mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis | **Apache-2.0** | Financial PhraseBank (**CC-BY-NC-SA-3.0**) | Closest domain (financial news sentences), but the training data is non-commercial |
+
+No model was found where the model, base model and training data are all clearly permissive.
+- **Checked and ruled out:**
+  - `yiyanghkust/finbert-tone` and `ahmedrachid/FinancialBERT-Sentiment-Analysis` declare no license;
+  - the `zeroshot/twitter-financial-news-sentiment` dataset is MIT, but every model fine-tuned on it is built on ProsusAI/finbert (non-commercial) or mixes in undeclared datasets.
+- **A fully clean route, if needed later:** fine-tune a permissively licensed base (e.g. an Apache-2.0 / MIT encoder) on `zeroshot/twitter-financial-news-sentiment` (MIT) plus our own labels.

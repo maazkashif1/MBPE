@@ -53,6 +53,8 @@ KEYWORDS: dict[str, list[str]] = {
     "sec_crypto": [r" sec ", _CRYPTO],  # SEC only together with crypto / bitcoin
 }
 _COMPILED = {k: [re.compile(p) for p in ps] for k, ps in KEYWORDS.items()}
+MACRO_KEYWORDS = {"federal_reserve", "fomc", "cpi", "inflation", "interest_rate"}
+CRYPTO_KEYWORDS = set(KEYWORDS) - MACRO_KEYWORDS  # a row with any crypto keyword is in the crypto group
 
 
 def normalize(title: str | None, url: str | None) -> str:
