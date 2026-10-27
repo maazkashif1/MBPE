@@ -106,3 +106,7 @@ Registered before any modeling. **No further label or cost variants will be adde
 - **Sentiment is scored per exact-unique normalized title** (decoded, lowercased, outlet suffix stripped), not per cluster. Scores map back to every row with that title.
 - **Near-duplicate clusters are used only for counting and novelty features.** A cluster takes no new members more than 24 h after its first member, so later developments start a new cluster. A cluster becomes available at its earliest member's batch time + 15 min; later copies add volume only.
 
+## Funding data (decided 2026-10-27)
+- **Months not yet in the Binance archive come from the public REST API** (`/fapi/v1/fundingRate`). Each clean row is tagged `source` = archive / rest.
+- **When the archive month appears, it must match the REST values exactly** (timestamps and rates), or the clean build fails. Checked on Sep 2026: 90/90 identical.
+- **Label building fails if a scheduled funding time (8 h UTC grid) inside a trade window has no funding data.** Missing funding is never treated as zero.

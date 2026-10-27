@@ -10,13 +10,14 @@ read_raw() / parse_csv() turn one raw file into a typed polars DataFrame with UT
 import hashlib
 import http.client
 import io
+import json
 import time
 import urllib.error
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -164,6 +165,75 @@ def fetch_history(name: str, start: date, end: date, root: Path = RAW_ROOT, work
     with ThreadPoolExecutor(workers) as ex:
         paths = ex.map(lambda p: _fetch_one(name, p, root), periods(name, start, end))
         return [p for p in paths if p is not None]
+
+
+# ---------- funding fallback: REST API for months not yet in the archive ----------
+
+REST_FUNDING = "https://fapi.binance.com/fapi/v1/fundingRate"
+REST_FUNDING_INFO = "https://fapi.binance.com/fapi/v1/fundingInfo"
+REST_ROOT = Path("data/raw/binance_rest/funding")
+DEFAULT_FUNDING_INTERVAL_H = 8  # BTCUSDT; fundingInfo lists only symbols with a non-default interval
+
+
+def _month_bounds(month: str) -> tuple[int, int]:
+    y, m = map(int, month.split("-"))
+    start = datetime(y, m, 1, tzinfo=UTC)
+    end = datetime(y + (m == 12), m % 12 + 1, 1, tzinfo=UTC)
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+
+def fetch_funding_rest(month: str, root: Path = REST_ROOT) -> Path:
+    """Fetch one month of BTCUSDT funding settlements from the public REST API and save the raw response.
+
+    Used for months whose archive file isn't published yet. The file for a month still in progress is
+    rewritten on each fetch (the only raw file that changes); once the archive month exists, build_clean
+    compares the two and the archive is used.
+    """
+    start, end = _month_bounds(month)
+    rows, cursor = [], start
+    while cursor < end:
+        page = json.loads(
+            _get(f"{REST_FUNDING}?symbol=BTCUSDT&startTime={cursor}&endTime={end - 1}&limit=1000")
+        )
+        rows += page
+        if len(page) < 1000:
+            break
+        cursor = page[-1]["fundingTime"] + 1
+    info = [x for x in json.loads(_get(REST_FUNDING_INFO)) if x["symbol"] == "BTCUSDT"]
+    interval = info[0]["fundingIntervalHours"] if info else DEFAULT_FUNDING_INTERVAL_H
+    out = root / f"BTCUSDT-fundingRate-{month}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "month": month,
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "interval_hours": interval,
+        "rows": rows,
+    }
+    _write_atomic(out, json.dumps(record).encode())
+    return out
+
+
+def fetch_funding_fallback(
+    start: date, end: date, root: Path = RAW_ROOT, rest_root: Path = REST_ROOT
+) -> list[Path]:
+    """REST-fetch every funding month in [start, end] that has no archive file."""
+    return [
+        fetch_funding_rest(m, rest_root)
+        for m in periods("funding", start, end)
+        if not raw_path("funding", m, root).exists()
+    ]
+
+
+def read_funding_rest(path: Path) -> pl.DataFrame:
+    rec = json.loads(path.read_text())
+    return pl.DataFrame(
+        {
+            "calc_time": [r["fundingTime"] for r in rec["rows"]],
+            "funding_interval_hours": [rec["interval_hours"]] * len(rec["rows"]),
+            "last_funding_rate": [float(r["fundingRate"]) for r in rec["rows"]],
+        },
+        schema={"calc_time": pl.Int64, "funding_interval_hours": pl.Int64, "last_funding_rate": pl.Float64},
+    ).with_columns(pl.col("calc_time").cast(UTC_MS))
 
 
 # ---------- parse ----------

@@ -89,3 +89,44 @@ def test_null_runs_finds_blank_stretches():
         (T0 + timedelta(minutes=1), T0 + timedelta(minutes=2), 2),
         (T0 + timedelta(minutes=4), T0 + timedelta(minutes=4), 1),
     ]
+
+
+def test_rest_funding_months_merge_and_cross_check(tmp_path):
+    import json
+
+    from mbpe.storage.clean import FundingMismatchError, merge_funding_rest
+
+    sep30_00, sep30_08, oct01_16 = (
+        1790726400002,
+        1790755200001,
+        1790870400003,
+    )  # epoch ms, with Binance's jitter
+
+    def rest_file(month, rows):
+        f = tmp_path / f"BTCUSDT-fundingRate-{month}.json"
+        f.write_text(json.dumps({"month": month, "interval_hours": 8, "rows": rows}))
+        return f
+
+    def row(t, rate):
+        return {"fundingTime": t, "fundingRate": rate}
+
+    archive = pl.DataFrame(
+        {
+            "calc_time": [sep30_00, sep30_08],
+            "funding_interval_hours": [8, 8],
+            "last_funding_rate": [7e-5, 4e-5],
+        },
+        schema={"calc_time": pl.Int64, "funding_interval_hours": pl.Int64, "last_funding_rate": pl.Float64},
+    ).with_columns(pl.col("calc_time").cast(pl.Datetime("ms", "UTC")))
+    same = rest_file("2026-09", [row(sep30_00, "0.00007"), row(sep30_08, "0.00004")])
+    new = rest_file("2026-10", [row(oct01_16, "0.00006980")])
+    out = merge_funding_rest(archive, [same, new])
+    assert out["source"].to_list() == ["archive", "archive", "rest"]  # archive wins for its own months
+    assert out["last_funding_rate"][2] == 6.98e-5
+
+    differ = rest_file("2026-09", [row(sep30_00, "0.00007"), row(sep30_08, "0.00004001")])
+    with pytest.raises(FundingMismatchError, match="2026-09"):
+        merge_funding_rest(archive, [differ])
+    missing_row = rest_file("2026-09", [row(sep30_00, "0.00007")])
+    with pytest.raises(FundingMismatchError):
+        merge_funding_rest(archive, [missing_row])

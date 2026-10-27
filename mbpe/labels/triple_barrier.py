@@ -57,6 +57,7 @@ class LabelConfig(BaseModel):
     maker_fee: NonNegativeFloat = 0.0002  # used by the "maker_entry_tp" cost scenario
     slippage_bps: NonNegativeFloat = 2.0  # per side, taker fills only
     latency_minutes: NonNegativeInt = 1
+    funding_interval_hours: PositiveInt = 8  # expected settlement schedule, on the UTC grid
     output: Path = Path("data/labels/triple_barrier.parquet")
 
 
@@ -99,6 +100,35 @@ def decision_atr(candles: pl.DataFrame, cfg: LabelConfig) -> pl.DataFrame:
     return hours.join_asof(bars, left_on="decision_time", right_on="bar_close", strategy="backward").select(
         "decision_time", "atr"
     )
+
+
+class MissingFundingError(ValueError):
+    """A scheduled funding time inside a trade window has no funding data."""
+
+
+def check_funding_coverage(f_t: np.ndarray, intervals: np.ndarray, entry_t, exit_t, cfg: LabelConfig) -> None:
+    """Fail if any trade window (entry, exit] contains a scheduled funding time missing from the data.
+
+    The schedule is every funding_interval_hours on the UTC grid (00:00, 08:00, 16:00 for 8 h). Missing
+    funding is never treated as zero.
+    """
+    if len(intervals) and set(np.unique(intervals)) != {cfg.funding_interval_hours}:
+        raise ValueError(
+            f"funding intervals {sorted(set(intervals))} != configured {cfg.funding_interval_hours} h"
+        )
+    if not len(entry_t):
+        return
+    step = cfg.funding_interval_hours * 3_600_000  # ms; the schedule sits on the UTC grid of this interval
+    first = (entry_t.min().astype(np.int64) // step + 1) * step
+    expected = np.arange(first, exit_t.max().astype(np.int64) + 1, step).astype("datetime64[ms]")
+    missing = np.setdiff1d(expected, f_t)
+    if missing.size:
+        hit = np.searchsorted(missing, exit_t, "right") - np.searchsorted(missing, entry_t, "right") > 0
+        if hit.any():
+            raise MissingFundingError(
+                f"{int(hit.sum())} trades have a funding time with no funding data; "
+                f"{missing.size} missing settlement(s), first {missing[:3].astype('datetime64[m]')}"
+            )
 
 
 def _first(mask: np.ndarray) -> np.ndarray:
@@ -165,6 +195,7 @@ def label_trades(
     for side, name in ((1, "long"), (-1, "short")):
         tp, sl, exit_price, reason, k, gapped = _scan(side, entry, atr, wo, wh, wl, wc, cfg)
         exit_t = ts[i + k] + np.where(gapped, 0, 1) * MINUTE
+        check_funding_coverage(f_t, f["funding_interval_hours"].to_numpy(), entry_t, exit_t, cfg)
         rate = cum[np.searchsorted(f_t, exit_t, "right")] - cum[np.searchsorted(f_t, entry_t, "right")]
         unit = np.abs(entry - sl)  # = sl_atr x ATR; same expression as in costs()
         gross_r = side * (exit_price - entry) / unit

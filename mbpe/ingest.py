@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 
 import polars as pl
 
-from mbpe.sources.binance import DATASETS, fetch_history
+from mbpe.sources.binance import DATASETS, fetch_funding_fallback, fetch_history
 from mbpe.storage.clean import build_clean, gap_report, null_runs
 
 
@@ -20,6 +20,8 @@ def main() -> None:
     for name in DATASETS:
         t0 = time.perf_counter()
         files = fetch_history(name, start, end)
+        if name == "funding":  # archive months not published yet come from the REST API
+            files += fetch_funding_fallback(start, end)
         t1 = time.perf_counter()
         df = build_clean(name)
         gaps = gap_report(name, df)

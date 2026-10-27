@@ -29,13 +29,36 @@ def candles(path: dict[int, tuple] | None = None, minutes: range = range(0, 7)) 
     ).with_columns(pl.col("open_time").cast(pl.Datetime("ms", "UTC")))
 
 
+FUNDING_SCHEMA = {
+    "calc_time": pl.Datetime("ms", "UTC"),
+    "funding_interval_hours": pl.Int64,
+    "last_funding_rate": pl.Float64,
+}
+
+
 def funding(*minutes_rates: tuple[int, float]) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "calc_time": [T + timedelta(minutes=m) for m, _ in minutes_rates],
+            "funding_interval_hours": [8] * len(minutes_rates),
             "last_funding_rate": [r for _, r in minutes_rates],
         },
-        schema={"calc_time": pl.Datetime("ms", "UTC"), "last_funding_rate": pl.Float64},
+        schema=FUNDING_SCHEMA,
+    )
+
+
+def funding_schedule(start: datetime, hours: int, rate: float = 1e-4) -> pl.DataFrame:
+    """A complete 8 h settlement schedule (00/08/16 UTC) covering `hours` from `start`, plus one interval."""
+    times = [
+        start + timedelta(hours=h) for h in range(0, hours + 9) if (start + timedelta(hours=h)).hour % 8 == 0
+    ]
+    return pl.DataFrame(
+        {
+            "calc_time": times,
+            "funding_interval_hours": [8] * len(times),
+            "last_funding_rate": [rate] * len(times),
+        },
+        schema=FUNDING_SCHEMA,
     )
 
 
@@ -183,9 +206,7 @@ def test_4h_atr_uses_only_4h_bars_closed_by_t():
 
 
 def test_taker_scenario_reproduces_stored_net_r_exactly():
-    labels, _ = build_labels(
-        random_candles(80, seed=1), funding((300, 0.0001), (780, -0.0002)), LabelConfig()
-    )
+    labels, _ = build_labels(random_candles(80, seed=1), funding_schedule(START, 80), LabelConfig())
     assert labels.height > 100
     assert (scenario_net_r(labels, LabelConfig(), "taker") == labels["net_R"]).all()
 
@@ -227,3 +248,21 @@ def test_short_mirrors_long_on_flipped_path():
         assert short[key] == pytest.approx(long[key]) if key == "gross_R" else short[key] == long[key]
     assert short["tp"] == pytest.approx(2 * e - long["tp"])
     assert short["sl"] == pytest.approx(2 * e - long["sl"])
+
+
+def test_missing_funding_inside_a_trade_window_fails():
+    from mbpe.labels.triple_barrier import MissingFundingError
+
+    full = funding_schedule(START, 80)
+    gap = full.filter(pl.col("calc_time") != START + timedelta(hours=40))  # one settlement missing
+    with pytest.raises(MissingFundingError, match="funding time with no funding data"):
+        build_labels(random_candles(80, seed=1), gap, LabelConfig())
+    with pytest.raises(MissingFundingError):
+        build_labels(random_candles(80, seed=1), full.head(0), LabelConfig())  # none at all: never zero
+    build_labels(random_candles(80, seed=1), full, LabelConfig())  # complete schedule passes
+
+
+def test_funding_interval_must_match_config():
+    odd = funding_schedule(START, 80).with_columns(funding_interval_hours=pl.lit(4, pl.Int64))
+    with pytest.raises(ValueError, match="funding intervals"):
+        build_labels(random_candles(80, seed=1), odd, LabelConfig())

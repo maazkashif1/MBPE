@@ -12,7 +12,7 @@ from pathlib import Path
 import pandera.polars as pa
 import polars as pl
 
-from mbpe.sources.binance import DATASETS, RAW_ROOT, UTC_MS, raw_files, read_raw
+from mbpe.sources.binance import DATASETS, RAW_ROOT, REST_ROOT, UTC_MS, raw_files, read_funding_rest, read_raw
 
 CLEAN_ROOT = Path("data/clean/binance")
 
@@ -79,6 +79,7 @@ SCHEMAS = {
             **_ts("funding"),
             "funding_interval_hours": pa.Column(pl.Int64, pa.Check.gt(0)),
             "last_funding_rate": pa.Column(pl.Float64),  # can be negative
+            "source": pa.Column(pl.String, pa.Check.isin(["archive", "rest"])),
         },
         strict=True,
     ),
@@ -107,12 +108,49 @@ def clean_path(name: str, root: Path = CLEAN_ROOT) -> Path:
     return root / f"{name}.parquet"
 
 
-def build_clean(name: str, raw_root: Path = RAW_ROOT, clean_root: Path = CLEAN_ROOT) -> pl.DataFrame:
-    """Rebuild the clean Parquet for `name` from every stored raw file."""
+class FundingMismatchError(ValueError):
+    """REST funding values disagree with the archive month that has since been published."""
+
+
+def merge_funding_rest(archive: pl.DataFrame, rest_files: list[Path]) -> pl.DataFrame:
+    """Archive funding plus REST months the archive doesn't have yet, tagged by source.
+
+    A REST month whose archive file now exists must match it exactly (timestamps and rates), else raise.
+    """
+    archive = archive.with_columns(source=pl.lit("archive"))
+    have = set(archive["calc_time"].dt.strftime("%Y-%m").unique().to_list())
+    frames = [archive]
+    for f in sorted(rest_files):
+        month = f.stem[-7:]  # BTCUSDT-fundingRate-YYYY-MM
+        rest = read_funding_rest(f)
+        if month in have:
+            a = archive.filter(pl.col("calc_time").dt.strftime("%Y-%m") == month)
+            j = a.join(rest, on="calc_time", how="full", coalesce=True, suffix="_rest")
+            bad = j.filter(
+                pl.col("last_funding_rate").is_null()
+                | pl.col("last_funding_rate_rest").is_null()
+                | (pl.col("last_funding_rate") != pl.col("last_funding_rate_rest"))
+            )
+            if bad.height:
+                raise FundingMismatchError(
+                    f"{month}: {bad.height} REST rows differ from the archive, e.g.\n{bad.head(5)}"
+                )
+        else:
+            frames.append(rest.with_columns(source=pl.lit("rest")))
+    return pl.concat(frames)
+
+
+def build_clean(
+    name: str, raw_root: Path = RAW_ROOT, clean_root: Path = CLEAN_ROOT, rest_root: Path = REST_ROOT
+) -> pl.DataFrame:
+    """Rebuild the clean Parquet for `name` from all stored raw files (funding: + REST fallback months)."""
     files = raw_files(name, raw_root)
     if not files:
         raise FileNotFoundError(f"no raw files for {name} under {raw_root}")
-    df = validate(name, dedupe(pl.concat([read_raw(name, f) for f in files]), DATASETS[name].ts_col))
+    df = pl.concat([read_raw(name, f) for f in files])
+    if name == "funding":
+        df = merge_funding_rest(df, sorted(rest_root.glob("*.json")))
+    df = validate(name, dedupe(df, DATASETS[name].ts_col))
     out = clean_path(name, clean_root)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".part")
