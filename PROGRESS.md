@@ -304,3 +304,120 @@ No model was found where the model, base model and training data are all clearly
   - `yiyanghkust/finbert-tone` and `ahmedrachid/FinancialBERT-Sentiment-Analysis` declare no license;
   - the `zeroshot/twitter-financial-news-sentiment` dataset is MIT, but every model fine-tuned on it is built on ProsusAI/finbert (non-commercial) or mixes in undeclared datasets.
 - **A fully clean route, if needed later:** fine-tune a permissively licensed base (e.g. an Apache-2.0 / MIT encoder) on `zeroshot/twitter-financial-news-sentiment` (MIT) plus our own labels.
+
+## Phase 2 step 2: market and derivatives features (2026-10-27)
+
+`uv run python -m mbpe.features.market` → `data/features/market.parquet`: **53,904 hourly decision times × 46 features** (37 technical, 9 derivatives), built in ~5 s. Settings are in `config/features.yaml`.
+
+**Rules applied:**
+- **Cutoff at t:** a feature at t uses only 1m candles that opened before t (closed ≤ t), metrics with `create_time` < t, and funding with `calc_time` < t.
+- **Relative values only.**
+- **Levels:** last value within a staleness limit (1m price 5 min, open interest **15 min**, funding 8 h + 60 min), else NaN.
+- **Flows:** summed over the minutes present, never forward-filled, with coverage features alongside.
+- **Changes:** NaN if either endpoint is stale.
+- **Registry:** every feature is a pure function registered with name, group (= ablation rung) and input datasets.
+- **ATR:** uses the same `atr_bars` as the labels.
+
+### Features by group
+**Technical** (futures 1m unless noted):
+- **Returns and volatility:**
+  - log returns `ret_1h/4h/24h/7d`;
+  - realized vol from 1m returns `rv_1h/4h/24h`;
+  - `atr_1h_pct`, `atr_4h_pct` (Wilder ATR(14) / price).
+- **Oscillators and range:**
+  - `rsi_14_1h`, `bb_pctb_20_1h`;
+  - `dist_high_24h_atr`, `dist_low_24h_atr`.
+- **Volume and taker flow:**
+  - `vol_z_7d` (log volume per minute vs the previous 168 h, needs ≥ 135 h);
+  - `taker_buy_ratio_1h/4h/24h`;
+  - `cvd_norm_1h/4h/24h`: (taker buy − taker sell) / (7-day volume per minute × window minutes). Dividing by the window's own volume would just repeat the taker ratio;
+  - coverage `fut_cov_1h/4h/24h/7d`.
+- **Volume profile 24h / 7d:**
+  - `vp_poc_dist_*` (distance from the point of control, ATR units);
+  - `vp_va_pos_*` (position in the value area: 0 = low edge, 1 = high edge, outside is < 0 or > 1). Volume goes to typical-price bins of 0.1% of price. **The value area is the classic contiguous one,** grown from the point of control toward the higher-volume neighbouring bin until it holds 70%.
+- **Anchored VWAP:** `vwap_day_dist_atr`, `vwap_week_dist_atr` (anchors at 00:00 UTC and Monday 00:00 UTC; at the anchor itself, the previous session).
+- **Spot vs perp** (futures + spot 1m):
+  - `spot_share_1h/4h`, over minutes where both markets traded;
+  - coverage `spot_cov_1h/4h`;
+  - `basis_spot_perp`, at the latest minute both closed.
+- **Calendar:** `hour_of_day`, `day_of_week` (1 = Monday).
+
+**Derivatives:**
+- **Funding** (archive + REST fallback): `funding_last`, `funding_z_30d` (vs settlements in the last 30 days, needs ≥ 72 of 90), `hours_to_next_funding`.
+- **Open interest:**
+  - `oi_chg_1h/4h/24h` (% change of `sum_open_interest`);
+  - **`oi_price_quadrant_1h/4h/24h`**, a category: 1 = price ↑ OI ↑, 2 = price ↑ OI ↓, 3 = price ↓ OI ↑, 4 = price ↓ OI ↓ (zero counts as up). It replaces the OI/price ratio. Since 2021, the 4h quadrant splits 13.7k / 12.1k / 12.3k / 12.8k. **Treat it as categorical when modeling.**
+
+### Data issues handled in the feature layer
+- **Zero open interest:** 481 metrics rows report OI = 0 (e.g. 102 on 2022-03-07). These are placeholders for missing snapshots. They're skipped, and the 15-min staleness limit decides whether the previous snapshot counts. The clean layer keeps them as delivered.
+- **Funding for October 2026:** it is not in the archive yet and now comes from the REST fallback. Before that, the funding features were 8.4% missing in 2026.
+
+### Leakage test (`tests/test_features.py`, all registered features)
+- **Method:** features computed on data truncated at t must equal features from the full data at t, for every feature, exactly (or both missing). Failures name the feature and the time.
+- **Synthetic data:** 70 days with missing futures minutes, a 3 h spot outage, a 2.5 h metrics gap, zero-OI placeholders and ms funding jitter. 200 random t plus 11 points near the gaps.
+- **Real slice:** Mar–May 2021, with real spot gaps (04-20, 04-25), a metrics gap (04-27) and zero OI (05-22). 200 random t plus 7 points near the gaps.
+- **Subset check:** evaluating at selected times equals the full table.
+- **The harness catches leakage:** a deliberately leaky feature (1 h look-ahead) makes it fail, naming that feature.
+- **Quadrant check:** the quadrant agrees with the signs of the price and OI changes.
+- **Result:** all pass after the quadrant and value-area changes.
+
+### Missing share per feature per year
+| feature | group | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | since 2021 |
+|---|---|---|---|---|---|---|---|---|---|
+| `ret_1h` | technical | 0.03% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ret_4h` | technical | 0.14% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ret_24h` | technical | 0.82% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ret_7d` | technical | 5.74% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `rv_1h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `rv_4h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `rv_24h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `atr_1h_pct` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `atr_4h_pct` | technical | 1.88% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `rsi_14_1h` | technical | 0.48% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `bb_pctb_20_1h` | technical | 0.65% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `dist_high_24h_atr` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `dist_low_24h_atr` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fut_cov_1h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fut_cov_4h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fut_cov_24h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `fut_cov_7d` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vol_z_7d` | technical | 4.61% | 0 | 0 | 0 | 0.01% | 0 | 0 | <0.01% |
+| `taker_buy_ratio_1h` | technical | 0 | 0 | 0 | 0 | 0.01% | 0 | 0 | <0.01% |
+| `cvd_norm_1h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `taker_buy_ratio_4h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `cvd_norm_4h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `taker_buy_ratio_24h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `cvd_norm_24h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vp_poc_dist_24h` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vp_va_pos_24h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vp_poc_dist_7d` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vp_va_pos_7d` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vwap_day_dist_atr` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `vwap_week_dist_atr` | technical | 0.44% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `spot_share_1h` | technical | 0.20% | 0.15% | 0 | 0.01% | 0 | 0 | 0 | 0.03% |
+| `spot_cov_1h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `spot_share_4h` | technical | 0.03% | 0.01% | 0 | 0 | 0 | 0 | 0 | <0.01% |
+| `spot_cov_4h` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `basis_spot_perp` | technical | 0.24% | 0.17% | 0 | 0.02% | 0 | 0 | 0 | 0.03% |
+| `hour_of_day` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `day_of_week` | technical | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `funding_last` | derivatives | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `funding_z_30d` | derivatives | 19.41% | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `hours_to_next_funding` | derivatives | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `oi_chg_1h` | derivatives | 0.17% | 0.41% | 0.13% | 0 | 0.14% | 0.02% | 0 | 0.12% |
+| `oi_price_quadrant_1h` | derivatives | 0.17% | 0.41% | 0.13% | 0 | 0.14% | 0.02% | 0 | 0.12% |
+| `oi_chg_4h` | derivatives | 0.27% | 0.49% | 0.16% | 0 | 0.17% | 0.02% | 0 | 0.15% |
+| `oi_price_quadrant_4h` | derivatives | 0.27% | 0.49% | 0.16% | 0 | 0.17% | 0.02% | 0 | 0.15% |
+| `oi_chg_24h` | derivatives | 0.96% | 0.50% | 0.23% | 0 | 0.25% | 0.02% | 0 | 0.17% |
+| `oi_price_quadrant_24h` | derivatives | 0.96% | 0.50% | 0.23% | 0 | 0.25% | 0.02% | 0 | 0.17% |
+**No feature is more than 5% missing since 2021-01-01** (largest: `oi_chg_24h` 0.17%). The 2020 values are warm-up (7-day returns, 30-day funding z-score, 7-day volume baseline).
+
+### Funding fallback and label rebuild
+- **Funding source:** clean funding = 6,663 archive rows (to 2026-09-30) + 80 REST rows (2026-10-01 → 10-27, `source = rest`). REST vs archive for Sep 2026: 90/90 identical.
+- **Labels fail on missing funding.** Label building now fails if a scheduled funding time inside a trade window has no data, so Oct 2026 can no longer get zero funding silently.
+- **What the rebuild changed:** only trades with decision times from 2026-09-30 20:00 to 2026-10-25 15:00 whose window includes a funding time. All of them previously had `funding_R` = 0; no other column or row changed.
+
+| Label set | Rows with funding_R changed | Mean / max change (R) | Label flips |
+|---|---|---|---|
+| A (1h ATR) | 383 (193 long, 190 short) | 0.009 / 0.025 | 3 (short) |
+| B (4h ATR) | 530 (259 long, 271 short) | 0.004 / 0.011 | 3 (short) |

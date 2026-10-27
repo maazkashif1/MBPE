@@ -1,0 +1,9 @@
+# Market and derivatives feature settings (Phase 2 step 2). Loaded by mbpe.features.market.load_feature_config.
+staleness_minutes:          # levels: last value within this limit, else NaN
+  price_1m: 5               # futures / spot 1m close
+  open_interest: 15         # 5-min metrics snapshots (SCOPE: ~15-30 min)
+  funding_slack: 60         # funding: settlement interval (8 h for BTCUSDT) + this slack
+funding_z_min_settlements: 72   # 30-day funding z-score needs >= 80% of the 90 settlements
+vol_z_min_hours: 135            # 7-day volume baseline needs >= 80% of 168 hourly bars
+volume_profile_bin_pct: 0.1     # volume profile bin width, % of price at t
+value_area: 0.70                # share of volume inside the value area
