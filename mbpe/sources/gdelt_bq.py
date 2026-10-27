@@ -74,12 +74,57 @@ def year_ranges(today: date) -> list[tuple[int, date, date]]:
     ]
 
 
-def build_sql(start: date, end: date, include_themes: bool) -> str:
-    """Matched English-source GKG rows with DATE in [start, end)."""
+# BigQuery side of the matching rule: normalized text `t` and the matched-keyword array.
+# Python side: normalize() / match_keywords(). Both are generated from KEYWORDS.
+NORM_SQL = """CONCAT(' ', TRIM(REGEXP_REPLACE(
+    LOWER(CONCAT(IFNULL(title, ''), ' ', IFNULL(DocumentIdentifier, ''))), r'[^a-z0-9]+', ' ')), ' ')"""
+
+
+def keywords_sql() -> str:
+    """ARRAY of matched keywords over a column `t` holding NORM_SQL."""
     conds = ",\n      ".join(
         "IF(" + " AND ".join(f"REGEXP_CONTAINS(t, r'{p}')" for p in ps) + f", '{k}', NULL)"
         for k, ps in KEYWORDS.items()
     )
+    return f"""ARRAY(SELECT k FROM UNNEST([
+      {conds}
+    ]) AS k WHERE k IS NOT NULL)"""
+
+
+# columns and types of the backfill rows (the live parser produces the same, plus fetched_at)
+BACKFILL_SCHEMA = pl.Schema(
+    {
+        "DATE": pl.Int64,
+        "SourceCommonName": pl.String,
+        "DocumentIdentifier": pl.String,
+        "V2Tone": pl.String,
+        "title": pl.String,
+        "keywords": pl.List(pl.String),
+    }
+)
+
+
+# A batch's rows count as available 15 min after its label (DATE), in the backtest AND in live mode.
+# Availability is always derived from DATE, never from when we fetched the file (fetched_at).
+AVAILABILITY_LAG = timedelta(minutes=15)
+
+
+def batch_time() -> pl.Expr:
+    """DATE (YYYYMMDDHHMMSS integer) as a UTC datetime: GDELT's batch label."""
+    return pl.col("DATE").cast(pl.String).str.strptime(pl.Datetime("ms", "UTC"), "%Y%m%d%H%M%S")
+
+
+def available_at() -> pl.Expr:
+    return (batch_time() + AVAILABILITY_LAG).alias("available_at")
+
+
+def news_as_of(df: pl.DataFrame, t: datetime) -> pl.DataFrame:
+    """Rows usable at decision time t: available_at <= t. Same filter for backfill and live rows."""
+    return df.filter(available_at() <= t)
+
+
+def build_sql(start: date, end: date, include_themes: bool) -> str:
+    """Matched English-source GKG rows with DATE in [start, end)."""
     themes = ", V2Themes" if include_themes else ""
     # _PARTITIONTIME gets a 1-day margin each side; the DATE filter makes the range exact
     return f"""WITH base AS (
@@ -91,13 +136,10 @@ def build_sql(start: date, end: date, include_themes: bool) -> str:
     AND DATE >= {start:%Y%m%d}000000 AND DATE < {end:%Y%m%d}000000
     AND (TranslationInfo IS NULL OR TranslationInfo = '')
 ), normed AS (
-  SELECT *, CONCAT(' ', TRIM(REGEXP_REPLACE(
-    LOWER(CONCAT(IFNULL(title, ''), ' ', IFNULL(DocumentIdentifier, ''))), r'[^a-z0-9]+', ' ')), ' ') AS t
+  SELECT *, {NORM_SQL} AS t
   FROM base
 ), tagged AS (
-  SELECT * EXCEPT (t), ARRAY(SELECT k FROM UNNEST([
-      {conds}
-    ]) AS k WHERE k IS NOT NULL) AS keywords
+  SELECT * EXCEPT (t), {keywords_sql()} AS keywords
   FROM normed
 )
 SELECT * FROM tagged WHERE ARRAY_LENGTH(keywords) > 0"""

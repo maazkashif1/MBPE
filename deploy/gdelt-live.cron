@@ -1,0 +1,5 @@
+# GDELT live collector: minutes 2, 17, 32, 47 (GDELT publishes each 15-min batch a minute or two after it closes).
+# Install with `crontab -e` and adjust MBPE_DIR and the uv path (`which uv`). Times are the machine's clock;
+# the collector itself works in UTC.
+MBPE_DIR=/path/to/MBPE
+2,17,32,47 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.sources.gdelt_live >> data/logs/gdelt_live.log 2>&1

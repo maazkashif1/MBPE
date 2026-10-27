@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the MBPE GDELT live collector at minutes 2, 17, 32, 47 (UTC)
+
+[Timer]
+OnCalendar=*-*-* *:02,17,32,47:00 UTC
+Persistent=true   # after sleep/downtime, run once on wake; the collector's 48 h catch-up fills the rest
+
+[Install]
+WantedBy=timers.target

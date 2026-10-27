@@ -207,3 +207,45 @@ The coverage query counts all GKG rows per 15-min batch. A batch with zero rows 
 - **Implications for the feature step:**
   - Coverage comes from `coverage.parquet`, per the SCOPE.md rule: outage batches mean no data, not no news.
   - 2020 has 22% outages, so news features there are unreliable. **Decision needed:** start the news ablation from 2021-01-01, or keep 2020 with the coverage flag.
+
+## Phase 1 step 4: GDELT live collector and backfill/live parity (2026-10-27)
+
+**Live collector** (`mbpe/sources/gdelt_live.py`, schedule examples in `deploy/`; not installed):
+- Each run reads `lastupdate.txt` and downloads the newest English GKG file, verifying size and MD5 against the listing. It then catches up any unsaved batch from the last 48 h by file name; those are checked by zip CRC, since the listing has no MD5 for them.
+- Rows are parsed with the same code path as the parity check and the same generated keyword matcher as the backfill. Each batch writes `data/raw/gdelt_live/<date>/<HHMM>.parquet` (matched rows + `fetched_at`) and `<HHMM>.json` (batch label, total English articles `n_rows` for live coverage, publish time, MD5). Batches older than 48 h that were never saved go to `gaps.json`.
+- **Availability = batch label (`DATE`) + 15 min**, in backtest and live, via `gdelt_bq.news_as_of`; `fetched_at` is never used. The collector logs a warning when a batch is published more than 15 min after its label.
+- **Bug found and fixed in the first live run:** GDELT sends the header as lowercase `last-modified`, and the test fake had used `Last-Modified`. The lookup is now case-insensitive and the test uses the real casing.
+
+**Live runs** (2026-10-27, minutes 2/17/32/47, 12:36–14:32 UTC):
+- The first run backfilled 192 batches (48 h) with no missing files and no gaps.
+- Each of the 8 later runs saved the 1 new batch.
+
+### Arrival lag (newest-batch fetches)
+| | n | min | median | max |
+|---|---|---|---|---|
+| publish time − batch label (from `lastupdate.txt` Last-Modified) | 8 | **−8.9 min** | **−8.8 min** | **−8.5 min** |
+| fetched_at − batch label, scheduled runs | 7 | 2.03 min | 2.03 min | 2.05 min |
+| fetched_at − batch label, incl. the unscheduled first run | 8 | −8.65 min | 2.03 min | 2.05 min |
+
+- **GDELT publishes each batch ~9 min *before* its label.** `DATE` names the 15-min window the batch closes into, not its publication time.
+- So "available = label + 15 min" is conservative by ~24 min and never leaks. **Late publishes (> 15 min after the label): 0 of 8.**
+- Live mode fetches each batch ~2 min after its label, well before it becomes usable at label + 15 min.
+
+### Backfill/live parity (`mbpe/sources/gdelt_parity.py`)
+The 96 English GKG files of a day went through the live parser and were compared with the BigQuery rows on article set (URL + DATE), title, tone, source and keywords.
+
+| Day | Why | Files | English rows | Live matched | BigQuery matched | Only live | Only BQ | Field differences |
+|---|---|---|---|---|---|---|---|---|
+| 2026-10-25 (Sun) | most recent fully covered backfill day | 96/96 | 53,112 | 205 | 205 | 0 | 0 | 0 |
+| 2025-07-15 (Tue) | June US CPI release; top CPI day, 3rd-busiest day of 2025–26 | 96/96 | 148,656 | 2,235 | 2,235 | 0 | 0 | 0 |
+
+- **Identical on both days.**
+- **Edge cases covered:** 79 + 14 titles with HTML entities, 1 empty title (matched via its URL) and 460 multi-keyword rows.
+- **Edge cases that never occur:** across all 1.89 M backfill rows there are no non-ASCII titles or URLs and no missing title tags, because GDELT writes special characters as entities.
+- **SQL rule vs Python matcher:** the generated SQL keyword rule, run in BigQuery on 13 literal sample titles (0 bytes scanned), matched the Python matcher exactly.
+
+**Rules added to SCOPE.md:**
+- all ablation comparisons start 2021-01-01;
+- news features are NaN where coverage is missing; rolling baselines skip missing batches and need ≥ 80% coverage;
+- empty-title rows count toward volume but not sentiment;
+- availability is label + 15 min.

@@ -1,0 +1,12 @@
+# systemd service for one collection run; triggered by mbpe-gdelt-live.timer.
+# Copy both files to ~/.config/systemd/user/ (or /etc/systemd/system/), adjust paths, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now mbpe-gdelt-live.timer
+[Unit]
+Description=MBPE GDELT live collector (one run)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/MBPE
+ExecStart=/usr/local/bin/uv run python -m mbpe.sources.gdelt_live

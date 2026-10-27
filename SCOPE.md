@@ -90,3 +90,12 @@ Registered before any modeling. **No further label or cost variants will be adde
 ## GDELT backfill query (Phase 1 step 3, 2026-10-26)
 - **V2Themes excluded from the BigQuery backfill.** Dry runs for 2020-09-01 → 2026-10-26: **486.3 GB** without V2Themes and **1,254.0 GB** with it, over the 900 GB budget (1 TB/month free allowance). So theme-based matching is not part of the MVP backfill. If it's revisited, it has to be scoped separately, e.g. only for already-matched rows' days, spread across months.
 - Matching rule and keyword list: `mbpe/sources/gdelt_bq.py` (`KEYWORDS`, `match_keywords`). It matches whole words on title or URL, keeps English-source rows only, and is shared with the live collector.
+
+## Evaluation window and news coverage (decided 2026-10-27)
+- **All ablation comparisons start 2021-01-01**: every rung (technical → +derivatives → +news) uses the same window. Reason: 22% of GDELT 15-min batches are missing in Sep–Dec 2020.
+- Market-only models may also be reported on the full Sep 2020 range, as a **separate** result, never mixed into the ablation table.
+- **News features are NaN where coverage is missing.** A batch with no GKG rows at all is an outage, not "no news".
+- **Rolling news baselines skip missing batches** and stay NaN until at least **80%** of their window is covered.
+- **Empty-title rows** (title tag present but empty; matched via URL) **count toward news volume but are excluded from sentiment scoring.**
+- **News availability = batch label (`DATE`) + 15 min, in the backtest and in live mode alike.** The filter is on batch time, never on `fetched_at` (`gdelt_bq.news_as_of`). The live collector warns whenever a batch is published more than 15 min after its label.
+
