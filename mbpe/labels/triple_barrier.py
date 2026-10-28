@@ -1,6 +1,6 @@
 """Triple-barrier trade labels from futures 1m candles.
 
-For every decision time t on the hour (UTC):
+For every decision time t on the hour (UTC), or every `decision_every_hours` hours on the UTC grid:
 - ATR: Wilder ATR over bars of `atr_timeframe` (1h, 4h, ...) built from 1m candles, taken from the
   latest bar that closed at or before t, so only candles that open before t are used.
 - Entry: open of the 1m candle starting at t + latency.
@@ -52,7 +52,8 @@ class LabelConfig(BaseModel):
     sl_atr: PositiveFloat = 1.0
     horizon_minutes: PositiveInt = 240
     atr_period: PositiveInt = 14
-    atr_timeframe: str = Field("1h", pattern=r"^[1-9][0-9]*h$")  # bar size for the ATR
+    atr_timeframe: str = Field("1h", pattern=r"^[1-9][0-9]*[hd]$")  # bar size for the ATR (1h, 4h, 1d)
+    decision_every_hours: PositiveInt = 1  # decision times on the UTC grid of this many hours (Phase 5: 4)
     taker_fee: NonNegativeFloat = 0.0005  # fraction of notional, per side
     maker_fee: NonNegativeFloat = 0.0002  # used by the "maker_entry_tp" cost scenario
     slippage_bps: NonNegativeFloat = 2.0  # per side, taker fills only
@@ -88,12 +89,14 @@ def atr_bars(candles: pl.DataFrame, every: str, period: int) -> pl.DataFrame:
 
 
 def decision_atr(candles: pl.DataFrame, cfg: LabelConfig) -> pl.DataFrame:
-    """Hourly decision times (each 1h close) with the ATR of the latest bar closed at or before t."""
+    """Decision times (1h closes on the UTC grid of `decision_every_hours`) with the ATR of the latest bar
+    closed at or before t."""
     hours = (
         candles.sort("open_time")
         .group_by_dynamic("open_time", every="1h")
         .agg()
         .select(decision_time=pl.col("open_time") + pl.duration(hours=1))
+        .filter(pl.col("decision_time").dt.hour() % cfg.decision_every_hours == 0)
     )
     bars = atr_bars(candles, cfg.atr_timeframe, cfg.atr_period)
     # a bar whose close lies after the last candle is still forming; asof never reaches it for t <= data end

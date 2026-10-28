@@ -266,3 +266,24 @@ def test_funding_interval_must_match_config():
     odd = funding_schedule(START, 80).with_columns(funding_interval_hours=pl.lit(4, pl.Int64))
     with pytest.raises(ValueError, match="funding intervals"):
         build_labels(random_candles(80, seed=1), odd, LabelConfig())
+
+
+def test_daily_atr_and_4_hourly_decisions():
+    """Phase 5: decisions only at 00/04/.../20 UTC; daily ATR from the UTC daily bar closed at or before t."""
+    df = random_candles(24 * 17)
+    cfg = LabelConfig(atr_timeframe="1d", decision_every_hours=4)
+    d = decision_atr(df, cfg)
+    assert set(d["decision_time"].dt.hour().unique().to_list()) == {0, 4, 8, 12, 16, 20}
+    midnight = START + timedelta(days=15)  # the 15th daily bar closes here: first ATR(14) = after warm-up
+    atr = atr_at(df, cfg, midnight)
+    assert atr is not None and atr_at(df, cfg, midnight - timedelta(hours=4)) is not None
+    assert atr == atr_bars(df, "1d", 14).filter(pl.col("bar_close") == midnight)["atr"][0]
+    shocked = shock_from(df, midnight)  # the forming day must not leak into t = 00:00 ... 20:00
+    for h in range(0, 24, 4):
+        assert atr_at(shocked, cfg, midnight + timedelta(hours=h)) == atr
+    assert atr_at(shocked, cfg, midnight + timedelta(days=1)) != atr_at(df, cfg, midnight + timedelta(days=1))
+
+
+def test_default_config_stays_hourly():
+    d = decision_atr(random_candles(30), LabelConfig())
+    assert d["decision_time"].dt.hour().n_unique() == 24
