@@ -780,6 +780,304 @@ def phase6_a_identity() -> str:
     return "\n".join(out) + "\n"
 
 
+P6E = P6 / "eval"
+P6_NAME = {
+    "primary": "primary only",
+    "primary_meta060": "primary + meta (P ≥ 0.60)",
+    "primary_metaval": "primary + meta (validation threshold)",
+}
+
+
+def _p6_ov() -> pl.DataFrame:
+    return pl.read_csv(P6E / "overall_metrics.csv")
+
+
+def _p6_row(ov: pl.DataFrame, **k) -> dict | None:
+    x = ov.filter(*[pl.col(c) == v for c, v in k.items()])
+    return x.row(0, named=True) if x.height else None
+
+
+def _p6_meta_period(ov: pl.DataFrame) -> str:
+    return sorted(p for p in ov["period"].unique().to_list() if not p.startswith("folds 0-"))[0]
+
+
+@block("phase6_c_headline")
+def phase6_c_headline() -> str:
+    ov = _p6_ov()
+    per = _p6_meta_period(ov)
+    k = {"period": per, "scenario": "taker"}
+    h = _p6_row(ov, **k, model="lgbm", strategy="primary_meta060", seed=-1)
+    p = _p6_row(ov, **k, model="lgbm", strategy="primary", seed=-1)
+    al = _p6_row(ov, **k, strategy="always_long", seed=-1)
+    sh = ov.filter(
+        (pl.col("period") == per)
+        & (pl.col("scenario") == "taker")
+        & (pl.col("strategy") == "shuffled_primary_meta060")
+    )["mean_R"].drop_nulls()
+    rnd = ov.filter((pl.col("period") == per) & (pl.col("scenario") == "taker") & (pl.col("model") == "lgbm")
+                    & (pl.col("strategy") == "random_vs_primary_meta060"))["mean_R"]  # fmt: skip
+    vol = ov.filter((pl.col("period") == per) & (pl.col("scenario") == "taker") & (pl.col("model") == "lgbm")
+                    & (pl.col("strategy") == "volfilter_vs_primary_meta060"))["mean_R"]  # fmt: skip
+    rows = [
+        ("headline", f"LightGBM three-class primary + meta-filter (P ≥ 0.60), label set A, taker, {per}"),
+        ("**trades / mean net R [95% CI]**", f"{h['trades']:,} / **{_ci(h)}**" if h else "no trades"),
+        ("net / gross bps per trade", _bps(h)),
+        ("primary only, same folds: trades / mean net R [95% CI]", f"{_trades(p)} / {_ci(p)}"),
+        (
+            "shuffled-label runs (meta-filtered): runs with trades / min / median / max mean net R",
+            f"{sh.len()} / {fmt(sh.min())} / {fmt(sh.median())} / {fmt(sh.max())}"
+            if sh.len()
+            else "no trades",
+        ),
+        (
+            "headline beats how many shuffled runs",
+            f"{(h['mean_R'] > sh).sum()} of {sh.len()}" if h and sh.len() else "–",
+        ),
+        (
+            "random entry / volatility filter at its frequency: median mean net R",
+            f"{fmt(rnd.median())} / {fmt(vol.median())}",
+        ),
+        ("always-long, same folds: mean net R [95% CI]", _ci(al)),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+@block("phase6_c_configs")
+def phase6_c_configs() -> str:
+    ov = _p6_ov()
+    m = ov.filter((pl.col("seed") == -1) & pl.col("model").is_in(["lgbm", "catboost"]))
+    out = [
+        "| period | model | strategy | scenario | trades | mean net R [95% CI] | net / gross bps "
+        "| random: net R (median) | vol filter: net R (median) |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in m.sort(
+        "period", "model", "strategy", "scenario", descending=[False, True, False, True]
+    ).iter_rows(named=True):
+        if r["trades"] == 0 and r["strategy"] != "primary" and r["period"].startswith("folds 0-"):
+            continue  # meta strategies only exist from the meta folds; shown in that period
+        b = {}
+        for base in ("random", "volfilter"):
+            sel = {k: r[k] for k in ("period", "model", "scenario")} | {
+                "strategy": f"{base}_vs_{r['strategy']}"
+            }
+            b[base] = ov.filter(*[pl.col(k) == v for k, v in sel.items()])["mean_R"].median()
+        out.append(
+            f"| {r['period']} | {r['model']} | {P6_NAME[r['strategy']]} | {r['scenario']} | {r['trades']:,} "
+            f"| {_ci(r)} | {_bps(r)} | {fmt(b['random'])} | {fmt(b['volfilter'])} |"
+        )
+    al = ov.filter(pl.col("strategy").str.starts_with("always"))
+    out += [
+        "",
+        "| period | baseline | scenario | trades | mean net R [95% CI] | net / gross bps |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in al.sort("period", "strategy", "scenario", descending=[False, False, True]).iter_rows(named=True):
+        out.append(
+            f"| {r['period']} | {r['strategy']} | {r['scenario']} | {r['trades']:,} | {_ci(r)} | {_bps(r)} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_targets")
+def phase6_c_targets() -> str:
+    """Scope-doc targets (research objectives, not pass criteria) for every model configuration, taker."""
+    ov = _p6_ov()
+    d = pl.read_csv(P6E / "directional.csv")
+    per = _p6_meta_period(ov)
+    out = [
+        "| model | strategy | period | trades | hit rate (net R > 0) — target 54–58% "
+        "| direction right (gross R > 0) | Sharpe (annualized, 1% risk) — target ≥ 1.8 "
+        "| profit factor — target ≥ 1.6 | max drawdown — target < 12% | targets met |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for model in ("lgbm", "catboost"):
+        for strat in ("primary", "primary_meta060", "primary_metaval"):
+            period = (
+                [p for p in ov["period"].unique().to_list() if p.startswith("folds 0-")][0]
+                if strat == "primary"
+                else per
+            )
+            r = _p6_row(ov, period=period, model=model, strategy=strat, scenario="taker", seed=-1)
+            if not r or not r["trades"]:
+                continue
+            dsel = {"model": model, "strategy": strat, "scenario": "taker", "seed": -1}
+            dr = d.filter(*[pl.col(k) == v for k, v in dsel.items()])["direction_right"]
+            met = [
+                0.54 <= r["hit_rate"],
+                (r["sharpe"] or float("-inf")) >= 1.8,
+                r["profit_factor"] >= 1.6,
+                r["max_drawdown"] < 0.12,
+            ]
+            out.append(
+                f"| {model} | {P6_NAME[strat]} | {period} | {r['trades']:,} | {r['hit_rate']:.1%} "
+                f"| {dr[0]:.1%} | {fmt(r['sharpe'], 2)} | {r['profit_factor']:.2f} | {r['max_drawdown']:.1%} "
+                f"| {sum(met)} of 4 |"
+            )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_shuffled")
+def phase6_c_shuffled() -> str:
+    ov = _p6_ov()
+    out = [
+        "| period | strategy (LightGBM, taker) | model mean net R | shuffled runs with trades "
+        "| shuffled min / median / max | shuffled runs beaten |",
+        "|---|---|---|---|---|---|",
+    ]
+    for per in sorted(ov["period"].unique().to_list()):
+        for strat in ("primary", "primary_meta060", "primary_metaval"):
+            r = _p6_row(ov, period=per, model="lgbm", strategy=strat, scenario="taker", seed=-1)
+            ssel = {"period": per, "scenario": "taker", "strategy": f"shuffled_{strat}"}
+            sh = ov.filter(*[pl.col(k) == v for k, v in ssel.items()])["mean_R"].drop_nulls()
+            if not r or not r["trades"]:
+                continue
+            out.append(
+                f"| {per} | {P6_NAME[strat]} | {fmt(r['mean_R'])} | {sh.len()} "
+                f"| {fmt(sh.min())} / {fmt(sh.median())} / {fmt(sh.max())} "
+                f"| {(r['mean_R'] > sh).sum()} of {sh.len()} |"
+            )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_shap")
+def phase6_c_shap() -> str:
+    imp = pl.read_csv(P6E / "shap_importance.csv")
+    stab = pl.read_csv(P6E / "shap_stability.csv")
+    out = ["Top 10 features by mean |SHAP| (LightGBM; share of the model's total):", ""]
+    for model in ("primary_long", "primary_short", "meta"):
+        g = imp.filter((pl.col("kind") == "lgbm") & (pl.col("model") == model)).sort("rank").head(10)
+        out.append(
+            f"- **{model}:** "
+            + ", ".join(f"{r['feature']} ({r['group']}, {r['share']:.1%})" for r in g.iter_rows(named=True))
+        )
+    groups = ("technical", "derivatives", "news", "calendar", "mark_premium", "regulatory")
+    out += ["", "Share of total |SHAP| by feature group:", ""]
+    out += ["| model | " + " | ".join(groups) + " |", "|---|" + "---|" * len(groups)]
+    for (kind, model), g in imp.filter(pl.col("model") != "meta").group_by(
+        "kind", "model", maintain_order=True
+    ):
+        s = g.group_by("group").agg(pl.col("share").sum())
+        cells = [s.filter(pl.col("group") == grp)["share"] for grp in groups]
+        out.append(
+            f"| {kind} {model} | " + " | ".join(f"{c[0]:.1%}" if c.len() else "–" for c in cells) + " |"
+        )
+    out += [
+        "",
+        "Fold-to-fold stability (Spearman rank correlation of feature importances between folds):",
+        "",
+    ]
+    out += ["| model | folds | mean ρ | min ρ |", "|---|---|---|---|"]
+    for r in stab.sort("kind", "model").iter_rows(named=True):
+        out.append(
+            f"| {r['kind']} {r['model']} | {r['folds']} | {r['spearman_mean']:.2f} "
+            f"| {r['spearman_min']:.2f} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_regimes")
+def phase6_c_regimes() -> str:
+    reg = pl.read_csv(P6E / "regimes.csv").filter((pl.col("scenario") == "taker") & (pl.col("seed") == -1))
+    cols = [
+        ("lgbm", "primary_meta060"),
+        ("lgbm", "primary"),
+        ("catboost", "primary_meta060"),
+        ("baseline", "always_long"),
+    ]
+    head = " | ".join(f"{m} {P6_NAME.get(s, s)}" for m, s in cols)
+    out = [f"| regime | {head} |", "|---|" + "---|" * len(cols)]
+    for dim, order in (
+        ("vol_regime", ["low vol", "mid vol", "high vol"]),
+        ("trend_regime", ["30d up", "30d down"]),
+    ):
+        for g in order:
+            cells = []
+            for m, s in cols:
+                x = reg.filter(
+                    (pl.col("dimension") == dim)
+                    & (pl.col("regime") == g)
+                    & (pl.col("model") == m)
+                    & (pl.col("strategy") == s)
+                )
+                cells.append(f"{fmt(x['mean_R'][0])} ({x['trades'][0]:,})" if x.height else "·")
+            out.append(f"| {g} | " + " | ".join(cells) + " |")
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_failures")
+def phase6_c_failures() -> str:
+    f = pl.read_csv(P6E / "folds_by_result.csv")
+    w = pl.read_csv(P6E / "worst_trades.csv")
+    out = ["Headline per fold, worst first (mean net R, taker):", ""]
+    out += [
+        "| fold | trades | mean net R | long share | stop first | expiry | take-profit |",
+        "|---|" + "---|" * 6,
+    ]
+    for r in f.iter_rows(named=True):
+        out.append(
+            f"| {r['fold']} | {r['trades']} | {fmt(r['mean_R'])} | {r['long_share']:.0%} "
+            f"| {r['share_sl']:.0%} | {r['share_expiry']:.0%} | {r['share_tp']:.0%} |"
+        )
+    out += ["", "Worst headline trades:", ""]
+    out += ["| decision time (UTC) | fold | side | exit | net R | vol regime | trend |", "|---|" + "---|" * 6]
+    for r in w.iter_rows(named=True):
+        when = datetime.fromtimestamp(r["decision_time"] / 1000, UTC).strftime("%Y-%m-%d %H:%M")
+        side = "long" if r["side"] == 1 else "short"
+        out.append(
+            f"| {when} | {r['fold']} | {side} | {r['exit_class']} | {fmt(r['net_R'], 2)} "
+            f"| {r['vol_regime'] or '–'} | {r['trend_regime'] or '–'} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_folds")
+def phase6_c_folds() -> str:
+    pf = pl.read_csv(P6E / "fold_metrics.csv").filter(pl.col("scenario") == "taker")
+
+    def cell(x):
+        return "·" if not x.height or not x["trades"][0] else f"{fmt(x['mean_R'][0], 2)} ({x['trades'][0]})"
+
+    out = [
+        "| fold | LightGBM primary | LightGBM + meta 0.60 | CatBoost primary | CatBoost + meta 0.60 "
+        "| always-long | shuffled + meta (median) |",
+        "|---|" + "---|" * 6,
+    ]
+
+    def one(x, model, strat):
+        return cell(
+            x.filter((pl.col("model") == model) & (pl.col("strategy") == strat) & (pl.col("seed") == -1))
+        )
+
+    for fold in sorted(pf["fold"].unique().to_list()):
+        x = pf.filter(pl.col("fold") == fold)
+
+        sh = x.filter(pl.col("strategy") == "shuffled_primary_meta060").filter(pl.col("trades") > 0)["mean_R"]
+        out.append(
+            f"| {fold} | {one(x, 'lgbm', 'primary')} | {one(x, 'lgbm', 'primary_meta060')} "
+            f"| {one(x, 'catboost', 'primary')} | {one(x, 'catboost', 'primary_meta060')} "
+            f"| {one(x, 'baseline', 'always_long')} "
+            f"| {fmt(sh.median(), 2) if sh.len() else '·'} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_c_meta_p")
+def phase6_c_meta_p() -> str:
+    d = pl.read_csv(P6E / "meta_p.csv")
+    out = [
+        "| primary | candidates scored by the meta-model | actual success rate (net R > 0) "
+        "| P(success): median | 90th pct | 99th pct | share ≥ 0.60 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in d.iter_rows(named=True):
+        out.append(
+            f"| {r['kind']} | {r['candidates']:,} | {r['success_rate']:.1%} | {r['p_median']:.2f} "
+            f"| {r['p_q90']:.2f} | {r['p_q99']:.2f} | {r['share_ge_060']:.2%} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 

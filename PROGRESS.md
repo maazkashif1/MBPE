@@ -1847,3 +1847,238 @@ Missing share in the evaluation window:
   - the keyword patterns are checked against true and false examples ("Bill Gates", "fine-tuned", "sec-ond", "Hackathon");
   - a test confirms each new cluster is counted once.
 - `tests/test_rss_live.py` (6) and `tests/test_liquidations_live.py` (6): offline, with fake feeds and a fake WebSocket. They cover silent connections, server close, reconnect with backoff, heartbeats under load, and a crash with no end record.
+
+## Phase 6 Workstream C: the evaluation run (2026-10-29, development evidence, no holdout)
+
+The single pre-registered evaluation run (`SCOPE.md`, "Phase 6"; Workstream B definitions in eb12343). The holdout access log is unchanged.
+- **Run:** `uv run python -m mbpe.validation.phase6_eval` → `reports/phase6/eval/`. It took about 15 minutes, including 20 shuffled-label runs.
+- **Configurations:** LightGBM and CatBoost three-class primaries on rung 60 (Phase 3 rung 3 + mark/premium + regulatory), label set A, both cost scenarios. Each is run as primary only, + meta at P ≥ 0.60 (the headline is LightGBM), and + meta at the validation-chosen threshold.
+- **Protocol:** Phase 3 folds, 48 h embargo, CPI/FOMC/NFP blackout, one position at a time.
+- **Controls:** always-long/short; random entry and volatility filter at each strategy's frequency (20 seeds each); 20 shuffled-label runs of the LightGBM system.
+- **Meta-labeling folds:** the meta-model exists from fold 4, so primary-vs-meta comparisons use folds 4–17.
+- **Status:** these are historical results on data studied since Phase 3. They are **development evidence only**, and none of them is a pass/fail test. Under the pre-registration, the only test of the scoped system is the forward test (Workstream E).
+
+### 1. Headline
+
+<!-- generated:phase6_c_headline -->
+| | |
+|---|---|
+| headline | LightGBM three-class primary + meta-filter (P ≥ 0.60), label set A, taker, folds 4-17 |
+| **trades / mean net R [95% CI]** | 13 / **-0.172 [-0.412, +0.007]** |
+| net / gross bps per trade | -10.8 / +3.1 |
+| primary only, same folds: trades / mean net R [95% CI] | 3,165 / -0.222 [-0.261, -0.181] |
+| shuffled-label runs (meta-filtered): runs with trades / min / median / max mean net R | 19 / -0.680 / -0.071 / +1.865 |
+| headline beats how many shuffled runs | 5 of 19 |
+| random entry / volatility filter at its frequency: median mean net R | -0.259 / -0.154 |
+| always-long, same folds: mean net R [95% CI] | -0.244 [-0.269, -0.217] |
+<!-- /generated:phase6_c_headline -->
+
+- **The fixed 0.60 meta threshold barely trades,** and what it trades doesn't make money after costs. Its CI is wide because the sample is tiny.
+- **It beats only a minority of the shuffled-label runs.** One of those shuffled runs shows a large positive mean on a handful of trades, which illustrates how meaningless tiny samples are.
+
+### 2. Why so few trades: the meta-model's probabilities
+
+<!-- generated:phase6_c_meta_p -->
+| primary | candidates scored by the meta-model | actual success rate (net R > 0) | P(success): median | 90th pct | 99th pct | share ≥ 0.60 |
+|---|---|---|---|---|---|---|
+| lgbm | 7,352 | 34.4% | 0.36 | 0.41 | 0.55 | 0.20% |
+| catboost | 6,005 | 35.2% | 0.35 | 0.42 | 0.57 | 0.87% |
+<!-- /generated:phase6_c_meta_p -->
+
+- **The meta probabilities are well calibrated:** their median matches the actual success rate.
+- **A candidate's realistic chance of success is far below 0.60,** so the scope doc's threshold, pre-registered as a fixed "initial hypothesis", selects only the rare tail. The scope doc anticipated this ("an initial hypothesis rather than a confirmed trading rule"); the validation-chosen threshold is the alternative it named.
+
+### 3. Primary vs meta-filtered, and against the shuffled-label runs (LightGBM, taker)
+
+<!-- generated:phase6_c_shuffled -->
+| period | strategy (LightGBM, taker) | model mean net R | shuffled runs with trades | shuffled min / median / max | shuffled runs beaten |
+|---|---|---|---|---|---|
+| folds 0-17 | primary only | -0.192 | 20 | -0.267 / -0.214 / -0.100 | 15 of 20 |
+| folds 0-17 | primary + meta (P ≥ 0.60) | -0.172 | 19 | -0.680 / -0.071 / +1.865 | 5 of 19 |
+| folds 0-17 | primary + meta (validation threshold) | -0.132 | 11 | -0.697 / -0.324 / -0.225 | 11 of 11 |
+| folds 4-17 | primary only | -0.222 | 20 | -0.354 / -0.248 / -0.147 | 12 of 20 |
+| folds 4-17 | primary + meta (P ≥ 0.60) | -0.172 | 19 | -0.680 / -0.071 / +1.865 | 5 of 19 |
+| folds 4-17 | primary + meta (validation threshold) | -0.132 | 11 | -0.697 / -0.324 / -0.225 | 11 of 11 |
+<!-- /generated:phase6_c_shuffled -->
+
+- **The meta-filter at the validation-chosen threshold improves on the primary model alone,** and it beats every shuffled run that traded.
+- **It still loses money after taker costs.** Among configurations with more than a handful of trades, it is the closest to break-even under maker costs, but its CI still includes zero (table 4).
+- **Whatever skill the filter has is too small to cover costs.** It's the same pattern as in every earlier phase.
+
+### 4. Every configuration
+
+<!-- generated:phase6_c_configs -->
+| period | model | strategy | scenario | trades | mean net R [95% CI] | net / gross bps | random: net R (median) | vol filter: net R (median) |
+|---|---|---|---|---|---|---|---|---|
+| folds 0-17 | lgbm | primary only | taker | 4,522 | -0.192 [-0.225, -0.157] | -11.1 / +2.9 | -0.226 | -0.147 |
+| folds 0-17 | lgbm | primary only | maker_entry_tp | 4,522 | -0.096 [-0.128, -0.062] | -5.3 / +2.9 | -0.132 | -0.091 |
+| folds 0-17 | lgbm | primary + meta (P ≥ 0.60) | taker | 13 | -0.172 [-0.412, +0.007] | -10.8 / +3.1 | -0.259 | -0.154 |
+| folds 0-17 | lgbm | primary + meta (P ≥ 0.60) | maker_entry_tp | 13 | -0.082 [-0.327, +0.105] | -5.1 / +3.1 | -0.148 | -0.124 |
+| folds 0-17 | lgbm | primary + meta (validation threshold) | taker | 1,578 | -0.132 [-0.178, -0.075] | -8.1 / +5.9 | -0.233 | -0.163 |
+| folds 0-17 | lgbm | primary + meta (validation threshold) | maker_entry_tp | 1,578 | -0.042 [-0.089, +0.014] | -2.2 / +5.9 | -0.138 | -0.110 |
+| folds 0-17 | catboost | primary only | taker | 3,988 | -0.156 [-0.190, -0.118] | -8.5 / +5.4 | -0.222 | -0.140 |
+| folds 0-17 | catboost | primary only | maker_entry_tp | 3,988 | -0.060 [-0.093, -0.023] | -2.7 / +5.4 | -0.128 | -0.087 |
+| folds 0-17 | catboost | primary + meta (P ≥ 0.60) | taker | 41 | -0.035 [-0.347, +0.334] | -11.5 / +2.2 | -0.331 | +0.033 |
+| folds 0-17 | catboost | primary + meta (P ≥ 0.60) | maker_entry_tp | 41 | +0.049 [-0.267, +0.428] | -5.2 / +2.2 | -0.232 | +0.060 |
+| folds 0-17 | catboost | primary + meta (validation threshold) | taker | 1,552 | -0.118 [-0.169, -0.066] | -6.9 / +7.0 | -0.243 | -0.152 |
+| folds 0-17 | catboost | primary + meta (validation threshold) | maker_entry_tp | 1,552 | -0.026 [-0.077, +0.025] | -0.9 / +7.0 | -0.143 | -0.099 |
+| folds 4-17 | lgbm | primary only | taker | 3,165 | -0.222 [-0.261, -0.181] | -11.5 / +2.5 | -0.253 | -0.167 |
+| folds 4-17 | lgbm | primary only | maker_entry_tp | 3,165 | -0.115 [-0.154, -0.075] | -5.7 / +2.5 | -0.151 | -0.106 |
+| folds 4-17 | lgbm | primary + meta (P ≥ 0.60) | taker | 13 | -0.172 [-0.412, +0.007] | -10.8 / +3.1 | -0.259 | -0.154 |
+| folds 4-17 | lgbm | primary + meta (P ≥ 0.60) | maker_entry_tp | 13 | -0.082 [-0.327, +0.105] | -5.1 / +3.1 | -0.148 | -0.124 |
+| folds 4-17 | lgbm | primary + meta (validation threshold) | taker | 1,578 | -0.132 [-0.178, -0.075] | -8.1 / +5.9 | -0.233 | -0.163 |
+| folds 4-17 | lgbm | primary + meta (validation threshold) | maker_entry_tp | 1,578 | -0.042 [-0.089, +0.014] | -2.2 / +5.9 | -0.138 | -0.110 |
+| folds 4-17 | catboost | primary only | taker | 2,692 | -0.185 [-0.226, -0.141] | -9.5 / +4.5 | -0.255 | -0.146 |
+| folds 4-17 | catboost | primary only | maker_entry_tp | 2,692 | -0.079 [-0.119, -0.036] | -3.6 / +4.5 | -0.153 | -0.089 |
+| folds 4-17 | catboost | primary + meta (P ≥ 0.60) | taker | 41 | -0.035 [-0.347, +0.334] | -11.5 / +2.2 | -0.331 | +0.033 |
+| folds 4-17 | catboost | primary + meta (P ≥ 0.60) | maker_entry_tp | 41 | +0.049 [-0.267, +0.428] | -5.2 / +2.2 | -0.232 | +0.060 |
+| folds 4-17 | catboost | primary + meta (validation threshold) | taker | 1,552 | -0.118 [-0.169, -0.066] | -6.9 / +7.0 | -0.243 | -0.152 |
+| folds 4-17 | catboost | primary + meta (validation threshold) | maker_entry_tp | 1,552 | -0.026 [-0.077, +0.025] | -0.9 / +7.0 | -0.143 | -0.099 |
+
+| period | baseline | scenario | trades | mean net R [95% CI] | net / gross bps |
+|---|---|---|---|---|---|
+| folds 0-17 | always_long | taker | 10,673 | -0.239 [-0.261, -0.217] | -14.7 / -0.5 |
+| folds 0-17 | always_long | maker_entry_tp | 10,673 | -0.145 [-0.166, -0.123] | -9.0 / -0.5 |
+| folds 0-17 | always_short | taker | 10,576 | -0.227 [-0.248, -0.205] | -13.7 / +0.1 |
+| folds 0-17 | always_short | maker_entry_tp | 10,576 | -0.132 [-0.153, -0.111] | -8.0 / +0.1 |
+| folds 4-17 | always_long | taker | 8,236 | -0.244 [-0.269, -0.217] | -13.8 / +0.4 |
+| folds 4-17 | always_long | maker_entry_tp | 8,236 | -0.143 [-0.168, -0.117] | -8.1 / +0.4 |
+| folds 4-17 | always_short | taker | 8,170 | -0.248 [-0.272, -0.224] | -14.3 / -0.6 |
+| folds 4-17 | always_short | maker_entry_tp | 8,170 | -0.148 [-0.172, -0.124] | -8.7 / -0.6 |
+<!-- /generated:phase6_c_configs -->
+
+- **No configuration has a 95% CI entirely above zero,** in either cost scenario. Meta strategies trade only from fold 4.
+- **CatBoost and LightGBM behave alike.**
+
+### 5. Scope-doc targets (research objectives, not pass criteria; taker)
+
+Definitions:
+- **hit rate:** share of trades with net R > 0;
+- **direction right:** share with gross R > 0;
+- **Sharpe:** annualized from daily returns at 1% risk per trade;
+- **profit factor:** on net R;
+- **max drawdown:** on compounded equity at 1% risk.
+
+<!-- generated:phase6_c_targets -->
+| model | strategy | period | trades | hit rate (net R > 0) — target 54–58% | direction right (gross R > 0) | Sharpe (annualized, 1% risk) — target ≥ 1.8 | profit factor — target ≥ 1.6 | max drawdown — target < 12% | targets met |
+|---|---|---|---|---|---|---|---|---|---|
+| lgbm | primary only | folds 0-17 | 4,522 | 36.1% | 44.4% | -5.60 | 0.65 | 100.0% | 0 of 4 |
+| lgbm | primary + meta (P ≥ 0.60) | folds 4-17 | 13 | 30.8% | 38.5% | -0.29 | 0.66 | 4.3% | 1 of 4 |
+| lgbm | primary + meta (validation threshold) | folds 4-17 | 1,578 | 38.5% | 46.4% | -2.69 | 0.75 | 88.7% | 0 of 4 |
+| catboost | primary only | folds 0-17 | 3,988 | 37.3% | 44.4% | -4.15 | 0.72 | 99.8% | 0 of 4 |
+| catboost | primary + meta (P ≥ 0.60) | folds 4-17 | 41 | 43.9% | 43.9% | -0.11 | 0.94 | 8.9% | 1 of 4 |
+| catboost | primary + meta (validation threshold) | folds 4-17 | 1,552 | 37.6% | 45.7% | -2.35 | 0.78 | 85.4% | 0 of 4 |
+<!-- /generated:phase6_c_targets -->
+
+**The targets aren't met.** The only "met" items are the drawdown limits of the near-empty meta configurations, which barely traded.
+
+### 6. SHAP: what the models use
+
+<!-- generated:phase6_c_shap -->
+Top 10 features by mean |SHAP| (LightGBM; share of the model's total):
+
+- **primary_long:** hour_of_day (technical, 9.6%), atr_1h_pct (technical, 6.4%), day_of_week (technical, 3.6%), rv_24h (technical, 3.4%), vol_z_7d (technical, 3.1%), vwap_day_dist_atr (technical, 3.1%), oi_chg_24h (derivatives, 2.5%), cvd_norm_24h (technical, 2.3%), premium_z_7d (mark_premium, 2.1%), ret_1h (technical, 1.9%)
+- **primary_short:** hour_of_day (technical, 10.1%), atr_1h_pct (technical, 6.7%), day_of_week (technical, 3.8%), dist_low_24h_atr (technical, 3.6%), vol_z_7d (technical, 3.4%), rsi_14_1h (technical, 2.6%), oi_chg_24h (derivatives, 2.6%), premium_z_7d (mark_premium, 2.5%), news_macro_new_clusters_24h (news, 2.4%), rv_24h (technical, 2.0%)
+- **meta:** rv_1h (technical, 23.9%), atr_1h_pct (technical, 23.5%), rv_24h (technical, 18.2%), p_expiry (meta input, 9.7%), rv_4h (technical, 8.6%), p_sl (meta input, 6.5%), p_tp (meta input, 5.4%), side (meta input, 4.3%)
+
+Share of total |SHAP| by feature group:
+
+| model | technical | derivatives | news | calendar | mark_premium | regulatory |
+|---|---|---|---|---|---|---|
+| lgbm primary_long | 56.1% | 6.7% | 25.9% | 2.3% | 5.0% | 4.0% |
+| lgbm primary_short | 54.3% | 6.4% | 27.3% | 2.5% | 5.9% | 3.6% |
+| catboost primary_long | 56.8% | 8.0% | 23.5% | 2.1% | 5.5% | 4.1% |
+| catboost primary_short | 55.9% | 7.3% | 25.0% | 2.3% | 6.7% | 2.9% |
+
+Fold-to-fold stability (Spearman rank correlation of feature importances between folds):
+
+| model | folds | mean ρ | min ρ |
+|---|---|---|---|
+| catboost meta | 14 | 0.63 | 0.02 |
+| catboost primary_long | 18 | 0.80 | 0.66 |
+| catboost primary_short | 18 | 0.86 | 0.72 |
+| lgbm meta | 14 | 0.70 | 0.00 |
+| lgbm primary_long | 18 | 0.79 | 0.59 |
+| lgbm primary_short | 18 | 0.86 | 0.71 |
+<!-- /generated:phase6_c_shap -->
+
+- **The primary models lean mostly on time (hour of day, day of week) and volatility.** News features together carry about a quarter of total |SHAP|, spread over many small features. The new mark/premium and regulatory groups carry little.
+- **The meta-model is mostly a volatility filter.**
+- **Importance rankings are stable across folds,** so the models use consistent inputs. SHAP shows what a model uses, not that it profits: the scope doc's own caveat applies.
+
+### 7. Regimes (reporting only: volatility terciles by trailing 30-day realized vol, trend by the 30-day return; cutoffs over the test period)
+
+Cells show mean net R (trades).
+
+<!-- generated:phase6_c_regimes -->
+| regime | lgbm primary + meta (P ≥ 0.60) | lgbm primary only | catboost primary + meta (P ≥ 0.60) | baseline always_long |
+|---|---|---|---|---|
+| low vol | +0.465 (6) | -0.283 (1,530) | +0.072 (16) | -0.291 (3,575) |
+| mid vol | -0.664 (5) | -0.141 (1,480) | -0.228 (22) | -0.245 (3,597) |
+| high vol | -0.854 (2) | -0.151 (1,512) | +0.802 (3) | -0.180 (3,501) |
+| 30d up | -0.158 (11) | -0.204 (2,334) | -0.207 (31) | -0.247 (5,654) |
+| 30d down | -0.254 (2) | -0.180 (2,188) | +0.496 (10) | -0.230 (5,019) |
+<!-- /generated:phase6_c_regimes -->
+
+- **The primary model loses in every regime.**
+- **The meta-filtered cells have too few trades to read.**
+
+### 8. Failure cases (headline)
+
+<!-- generated:phase6_c_failures -->
+Headline per fold, worst first (mean net R, taker):
+
+| fold | trades | mean net R | long share | stop first | expiry | take-profit |
+|---|---|---|---|---|---|---|
+| 13 | 2 | -0.796 | 50% | 50% | 50% | 0% |
+| 8 | 8 | -0.107 | 38% | 25% | 62% | 12% |
+| 17 | 3 | +0.068 | 100% | 33% | 33% | 33% |
+
+Worst headline trades:
+
+| decision time (UTC) | fold | side | exit | net R | vol regime | trend |
+|---|---|---|---|---|---|---|
+| 2024-02-17 16:00 | 8 | short | sl | -1.23 | mid vol | 30d up |
+| 2026-04-06 17:00 | 17 | long | sl | -1.23 | mid vol | 30d up |
+| 2024-01-30 21:00 | 8 | long | sl | -1.22 | high vol | 30d up |
+| 2025-05-13 17:00 | 13 | short | sl | -1.21 | low vol | 30d up |
+| 2024-01-30 02:00 | 8 | long | expiry | -0.49 | high vol | 30d up |
+| 2024-01-17 21:00 | 8 | short | expiry | -0.38 | mid vol | 30d up |
+| 2025-06-25 02:00 | 13 | long | expiry | -0.38 | low vol | 30d down |
+| 2026-04-06 18:00 | 17 | long | expiry | -0.35 | mid vol | 30d up |
+| 2024-01-25 22:00 | 8 | long | expiry | -0.13 | mid vol | 30d down |
+| 2024-02-22 16:00 | 8 | short | expiry | +0.05 | low vol | 30d up |
+| 2024-02-12 07:00 | 8 | short | expiry | +0.78 | low vol | 30d up |
+| 2024-02-12 01:00 | 8 | short | tp | +1.77 | low vol | 30d up |
+| 2026-04-13 18:00 | 17 | long | tp | +1.79 | low vol | 30d up |
+<!-- /generated:phase6_c_failures -->
+
+### 9. Per fold (taker; mean net R (trades))
+
+<!-- generated:phase6_c_folds -->
+| fold | LightGBM primary | LightGBM + meta 0.60 | CatBoost primary | CatBoost + meta 0.60 | always-long | shuffled + meta (median) |
+|---|---|---|---|---|---|---|
+| 0 | -0.09 (342) | · | -0.04 (367) | · | -0.15 (601) | · |
+| 1 | +0.00 (416) | · | -0.02 (386) | · | -0.24 (624) | · |
+| 2 | -0.12 (348) | · | -0.05 (255) | · | -0.16 (615) | · |
+| 3 | -0.39 (251) | · | -0.30 (288) | · | -0.34 (597) | · |
+| 4 | -0.19 (302) | · | -0.19 (303) | · | -0.18 (615) | -0.28 |
+| 5 | -0.20 (452) | · | -0.15 (376) | -0.82 (6) | -0.25 (612) | +0.36 |
+| 6 | -0.41 (387) | · | -0.40 (322) | · | -0.44 (629) | -0.50 |
+| 7 | -0.22 (318) | · | -0.14 (285) | +0.00 (24) | -0.20 (613) | -0.06 |
+| 8 | -0.05 (274) | -0.11 (8) | -0.08 (218) | · | -0.14 (618) | -0.33 |
+| 9 | -0.17 (301) | · | -0.13 (276) | +0.53 (4) | -0.30 (617) | -0.03 |
+| 10 | -0.06 (205) | · | -0.17 (202) | +0.45 (4) | -0.22 (628) | +0.32 |
+| 11 | -0.06 (150) | · | +0.01 (105) | · | -0.17 (625) | -0.12 |
+| 12 | -0.32 (131) | · | -0.15 (130) | +0.32 (2) | -0.24 (613) | +1.08 |
+| 13 | -0.40 (203) | -0.80 (2) | -0.24 (139) | · | -0.23 (618) | -0.35 |
+| 14 | -0.36 (189) | · | -0.30 (131) | · | -0.34 (619) | -0.21 |
+| 15 | -0.13 (106) | · | -0.16 (75) | · | -0.23 (635) | -0.01 |
+| 16 | -0.16 (105) | · | -0.10 (91) | · | -0.25 (628) | +0.17 |
+| 17 | -0.45 (42) | +0.07 (3) | -0.41 (39) | -1.18 (1) | -0.21 (166) | +0.30 |
+<!-- /generated:phase6_c_folds -->
+
+### Code
+- `mbpe/validation/phase6_eval.py`: the run, the controls (Phase 3 definitions, at each strategy's per-fold frequency), the targets, SHAP tables, regimes and failure cases.
+- **`meta_p.csv` was added after the run.** It summarizes the run's own saved candidates; nothing was re-run.
+- **Smoke-tested before the run** on the synthetic planted-signal dataset (monthly folds, 2 permutations), so a crash couldn't cut the real run short.
