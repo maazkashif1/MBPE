@@ -1,6 +1,6 @@
 # MBPE findings
 
-> Final. Tag `mbpe-research-v1` covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Tag `mbpe-research-v1.1` adds Phase 4, the checklist extensions (walk-forward only; the holdout stays closed). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
+> Final. Tag `mbpe-research-v1` covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Tag `mbpe-research-v1.1` adds Phase 4, the checklist extensions, and `mbpe-research-v1.2` adds Phase 5, the longer horizon (both walk-forward only; the holdout stays closed). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
 
 ## Question
 Can hourly signals from BTCUSDT perpetual market data, derivatives data and news headlines predict triple-barrier trade outcomes well enough to make money **after costs**? In particular, does adding news improve on market data alone? The pre-registered kill criterion: if the news layer doesn't improve net-of-costs results across folds and the holdout, that is the finding.
@@ -220,3 +220,95 @@ Passing would only have qualified an extension for a forward test.
 - **The noise was as large as the threshold.** Each rung had a single shuffled-label control, and that control's gross bps moved between feature sets by about the size of the 2 bps threshold (table above). Some of each extension's measured gain came from its control moving, not from the model; for example, 4a's advantage rose while its own gross bps fell.
 - **It didn't change this verdict:** every extension also failed the net-R condition by a wide margin.
 - **The fix:** with a threshold this small, the control should be averaged over many permutations, with the same permutations across feature sets, so its noise is small next to the threshold.
+
+## Phase 5: longer horizon
+**Question:** does the Phase 3 approach work at a slower cadence, where fixed costs are a smaller share of each trade's typical move?
+
+**Protocol** (pre-registered in `SCOPE.md`, "Phase 5 pre-registration", with one reporting amendment committed before any model):
+- **Decisions and barriers:** decisions every 4 hours, a 24 h horizon, and +2 / −1 × daily ATR(14) barriers. One label set.
+- **Features and models:** the unchanged Phase 3 features (rungs 1–3); logistic regression and fixed-settings LightGBM, with no tuning.
+- **Validation:** the Phase 3 walk-forward folds, with a 48 h embargo and no blackout.
+- **Entry rule:** a top-25% rule on validation scores instead of a threshold search.
+
+**Status:** the 2021–2026 data had already been studied in Phases 3–4, so any Phase 5 historical result is development evidence only. Passing could only have triggered a forward test.
+
+**Labels:** at this horizon most trades end at expiry (table below), so a trade's outcome is essentially its 24 h return net of costs. Costs are a much smaller share of the R unit than in Phase 3, and always-long is close to break-even after taker costs (`PROGRESS.md`, "Phase 5 step 1").
+
+<!-- generated:phase5_exit_reasons -->
+| period | side | labels | tp | sl | expiry | label = 1 (net R > 0, taker) | mean hold (h) | mean gross R | mean net R (taker) | sd of net R per label (taker) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| evaluation window 2021-01-01 → holdout | long | 11,640 | 1.9% | 12.0% | 86.1% | 46.4% | 22.5 | +0.017 | -0.024 | 0.63 |
+| evaluation window 2021-01-01 → holdout | short | 11,640 | 2.1% | 12.1% | 85.8% | 45.6% | 22.5 | -0.009 | -0.038 | 0.62 |
+| test folds 2022-01-01 → holdout | long | 9,450 | 2.1% | 12.1% | 85.9% | 45.9% | 22.5 | +0.016 | -0.026 | 0.63 |
+| test folds 2022-01-01 → holdout | short | 9,450 | 1.9% | 12.4% | 85.7% | 45.2% | 22.5 | -0.009 | -0.043 | 0.62 |
+<!-- /generated:phase5_exit_reasons -->
+
+<!-- generated:phase5_verdict -->
+| | |
+|---|---|
+| headline | rung 3 LightGBM, taker, pooled over all test trades: 1,209 trades |
+| 1. mean net R > 0 | -0.059: no |
+| 2. 95% CI lower bound > 0 | [-0.093, -0.022]: no |
+| 3. beats all 20 shuffled-label runs (p < 0.05) | beats 5 of 20 (their mean net R: min -0.081, median -0.037, max -0.006): no |
+| **historical pass criterion** | **FAIL** |
+<!-- /generated:phase5_verdict -->
+
+**Verdict: the pass criterion fails on all three conditions; no forward test; the Phase 3 finding stands at the longer horizon too.**
+
+<!-- generated:phase5_interpretation -->
+| | |
+|---|---|
+| headline mean net R (taker) [95% CI] | -0.059 [-0.093, -0.022] |
+| always-long mean net R (taker) [95% CI] | -0.023 [-0.057, +0.015] (1,460 trades; identical to step 1: **yes**) |
+| random long-only at the headline's frequency, 20 seeds: median [5%, 95%] | -0.026 [-0.035, -0.019] |
+| share of the headline's trades that are long | 46.7% |
+| headline mean net R exceeds always-long's | no |
+| **interpretation rule outcome** | **not applicable (criterion not passed)** |
+<!-- /generated:phase5_interpretation -->
+
+**Interpretation rule (amendment):** it doesn't apply, since the criterion failed. The headline also does worse than always-long and than random long-only entries at its own frequency, and its trades are split between long and short. So there's no drift exposure to explain away; the model simply has no edge.
+
+<!-- generated:phase5_controls -->
+| scenario | rung | LightGBM: mean net R | shuffled-label runs: min / median / max mean net R | runs beaten | shuffled: median gross bps |
+|---|---|---|---|---|---|
+| taker | 1 | -0.028 | -0.090 / -0.035 / +0.007 | 13/20 | +0.6 |
+| taker | 2 | -0.016 | -0.085 / -0.039 / -0.003 | 19/20 | -1.5 |
+| taker | 3 | -0.059 | -0.081 / -0.037 / -0.006 | 5/20 | -0.8 |
+| maker_entry_tp | 1 | -0.014 | -0.076 / -0.021 / +0.021 | 13/20 | +0.6 |
+| maker_entry_tp | 2 | -0.002 | -0.071 / -0.025 / +0.011 | 19/20 | -1.5 |
+| maker_entry_tp | 3 | -0.045 | -0.067 / -0.023 / +0.007 | 5/20 | -0.8 |
+
+| baseline | scenario | trades | mean net R [95% CI] | net / gross bps |
+|---|---|---|---|---|
+| always_long | taker | 1,460 | -0.023 [-0.057, +0.015] | -10.3 / +5.4 |
+| always_long | maker_entry_tp | 1,460 | -0.009 [-0.043, +0.029] | -5.2 / +5.4 |
+| always_short | taker | 1,475 | -0.055 [-0.092, -0.020] | -18.1 / -5.8 |
+| always_short | maker_entry_tp | 1,475 | -0.041 [-0.078, -0.006] | -13.0 / -5.8 |
+<!-- /generated:phase5_controls -->
+
+- **News doesn't help here either.** Rung 3 (with news) is the weakest LightGBM rung.
+- **No configuration has a 95% CI lower bound above zero.** A few logistic-regression configurations sit near break-even, with positive point estimates under maker costs. They aren't the pre-registered decision configuration, and choosing one now would be the kind of post-hoc selection the protocol rules out (full table in `PROGRESS.md`).
+- **The 20 shuffled-label runs spread widely.** Requiring the headline to beat all of them, not a single control, is what keeps chance from passing. This applies the Phase 4 lesson.
+
+**Lesson: a quantile entry rule needs untied scores.**
+- The rule "score ≥ the 75th percentile of the validation scores" assumed distinct scores. Isotonic calibration produces ties, so it usually selected far more than 25% of decisions.
+- Where the calibrated scores were constant, it selected every decision. The rule was applied exactly as pre-registered and the realized shares are reported:
+
+<!-- generated:phase5_entry_shares -->
+| model | rung | side | validation share selected: median [min, max] | test share selected: median | fold-sides selecting ≥ 99% of validation (constant scores) |
+|---|---|---|---|---|---|
+| lgbm | 1 | long | 39% [27%, 100%] | 40% | 1/18 |
+| lgbm | 1 | short | 57% [26%, 96%] | 54% | 0/18 |
+| lgbm | 2 | long | 38% [25%, 100%] | 43% | 3/18 |
+| lgbm | 2 | short | 43% [26%, 81%] | 40% | 0/18 |
+| lgbm | 3 | long | 38% [27%, 100%] | 38% | 1/18 |
+| lgbm | 3 | short | 44% [25%, 100%] | 45% | 1/18 |
+| logreg | 1 | long | 45% [26%, 100%] | 47% | 2/18 |
+| logreg | 1 | short | 46% [26%, 100%] | 42% | 1/18 |
+| logreg | 2 | long | 44% [25%, 100%] | 53% | 1/18 |
+| logreg | 2 | short | 54% [25%, 100%] | 45% | 1/18 |
+| logreg | 3 | long | 45% [26%, 97%] | 50% | 0/18 |
+| logreg | 3 | short | 53% [25%, 93%] | 60% | 0/18 |
+<!-- /generated:phase5_entry_shares -->
+
+- **Fix for any future use:** rank on the uncalibrated model score, or break ties explicitly, so the rule selects the intended share.
