@@ -24,6 +24,7 @@ from mbpe.validation.walk_forward import load_eval_config
 OUT = Path("reports/phase3_step2_cryptobert")
 CRYPTOBERT_NEWS = Path("data/features/news_cryptobert.parquet")
 FINBERT_TRADES = Path("data/features/phase3_step2_trades.parquet")
+CRYPTOBERT_TRADES = Path("data/features/phase3_step2_cryptobert_trades.parquet")
 
 
 def cfg_cryptobert():
@@ -65,6 +66,7 @@ def evaluate() -> None:
         & ~pl.col("strategy").str.contains("shuffled")
     )
     trades = pl.concat([tag(fin, "finbert"), *parts], how="diagonal_relaxed")
+    trades.filter(pl.col("scorer") == "cryptobert").write_parquet(CRYPTOBERT_TRADES)
     rows_fold, rows_all = [], []
     for scorer in ("finbert", "cryptobert"):
         pf, ov = summarize(trades.filter(pl.col("scorer") == scorer).drop("scorer"), cfg)

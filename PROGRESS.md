@@ -580,6 +580,7 @@ No model was found where the model, base model and training data are all clearly
 5. **Label set B's smaller losses are mechanical,** as in Phase 1: costs in R are halved by the wider 4h ATR. Compare models within a label set only.
 
 ### Per-label-set results (from `reports/phase3_step1/report.md`)
+<!-- generated:phase3_step1_report -->
 #### Label set A, cost scenario `taker`
 
 | strategy | rung | trades | mean R [95% CI] | bps/trade | return/yr | hit | PF | Sharpe | max DD | random: median mean R [5–95%] | folds > random median | folds > random p95 |
@@ -725,6 +726,7 @@ Per fold: mean net R (trades). `·` = no trades (threshold rule not met or no si
 | 15 | 2025-10-01 | -0.10 (486) | -0.02 (475) | -0.02 (167) | +0.03 (145) | -0.11 (219) | +0.01 (52) | -0.08 (89) | -0.12 (109) |
 | 16 | 2026-01-01 | -0.09 (471) | -0.05 (466) | -0.02 (102) | -0.04 (205) | -0.04 (177) | -0.06 (217) | -0.08 (245) | -0.08 (357) |
 | 17 | 2026-04-01 | -0.04 (123) | -0.14 (129) | -0.05 (80) | +0.00 (39) | -0.09 (85) | -0.01 (101) | -0.07 (106) | -0.12 (39) |
+<!-- /generated:phase3_step1_report -->
 
 ### Tests (`tests/test_validation.py`, 8)
 - **Splitter:** no training or validation label window overlaps its test fold or the 24 h embargo after it, for all 18 folds; training is purged against validation. Folds are contiguous up to the holdout.
@@ -750,15 +752,39 @@ The pre-registered additions are in SCOPE.md ("Phase 3 step 2 additions"), writt
 ### 2. Basis-point view: directional skill is a few bps, against ~14 bps of costs
 Overall gross bps per trade (taker costs are about 14 bps per round trip for every trade):
 
-| Label set A, taker | gross bps | net bps |
-|---|---|---|
-| random entry (median over seeds) | −1.4 to +0.7 | −15 to −13 |
-| volatility filter | −1.8 to 0.0 | −16 to −14 |
-| logistic regression r1–r3 | +3.3 to +4.5 | −10.7 to −9.5 |
-| LightGBM r1–r3 | +3.1 to +4.7 | −10.9 to −9.2 |
-| **LightGBM tuned r2** | **+8.3** | **−5.6** |
-| LightGBM tuned r1 / r3 | +3.8 / +5.1 | −10.1 / −8.8 |
-| shuffled-label LightGBM r3 (control) | **+2.5** | −11.4 |
+<!-- generated:phase3_step2_bps -->
+| label set | scenario | model | rung | trades | net bps | gross bps | random: gross bps (median) | vol filter: gross bps (median) | mean per-fold net-bps advantage vs random / vol filter | folds with positive advantage vs random / vol filter |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | taker | logreg | 1 | 4,462 | -10.7 | +3.3 | -0.1 | -1.3 | +4.3 / +10.3 | 14/18 / 13/18 |
+| A | maker_entry_tp | logreg | 1 | 4,539 | -5.1 | +3.3 | -0.2 | -1.2 | +4.3 / +10.0 | 14/18 / 13/18 |
+| A | taker | lgbm | 1 | 4,020 | -10.2 | +3.8 | -0.3 | -0.6 | +3.3 / +1.5 | 13/18 / 12/18 |
+| A | maker_entry_tp | lgbm | 1 | 4,216 | -4.8 | +3.4 | -0.4 | -0.5 | +3.1 / +0.1 | 13/18 / 11/18 |
+| A | taker | logreg | 2 | 4,606 | -9.5 | +4.5 | +0.2 | -0.7 | +5.1 / +12.5 | 14/18 / 15/18 |
+| A | maker_entry_tp | logreg | 2 | 4,967 | -4.5 | +3.8 | -0.1 | -0.9 | +4.8 / +11.9 | 14/18 / 16/18 |
+| A | taker | lgbm | 2 | 4,155 | -10.9 | +3.1 | -1.4 | -1.8 | +5.1 / +13.0 | 16/18 / 17/18 |
+| A | maker_entry_tp | lgbm | 2 | 4,287 | -5.7 | +2.6 | -1.5 | -2.1 | +4.9 / +12.9 | 16/18 / 17/18 |
+| A | taker | logreg | 3 | 5,610 | -10.6 | +3.4 | -0.4 | -0.7 | +3.0 / +11.0 | 15/18 / 14/18 |
+| A | maker_entry_tp | logreg | 3 | 5,771 | -4.9 | +3.5 | -0.2 | -0.7 | +3.1 / +10.7 | 15/18 / 13/18 |
+| A | taker | lgbm | 3 | 3,946 | -9.2 | +4.7 | -0.7 | -1.3 | +5.0 / +4.0 | 16/18 / 15/18 |
+| A | maker_entry_tp | lgbm | 3 | 3,946 | -3.5 | +4.7 | -0.7 | -1.3 | +5.0 / +4.1 | 16/18 / 15/18 |
+| B | taker | logreg | 1 | 4,817 | -10.8 | +3.2 | -0.9 | -0.8 | +4.8 / +4.7 | 15/18 / 13/18 |
+| B | maker_entry_tp | logreg | 1 | 5,110 | -5.9 | +2.9 | -1.0 | -0.7 | +4.9 / +4.5 | 16/18 / 13/18 |
+| B | taker | lgbm | 1 | 3,756 | -11.8 | +2.1 | -0.7 | -2.3 | +3.6 / +2.6 | 11/18 / 12/18 |
+| B | maker_entry_tp | lgbm | 1 | 4,227 | -8.0 | +0.8 | -0.8 | -1.6 | +2.6 / +0.8 | 10/18 / 11/18 |
+| B | taker | logreg | 2 | 4,634 | -12.4 | +1.6 | +0.2 | -0.1 | +2.8 / +7.9 | 13/18 / 11/18 |
+| B | maker_entry_tp | logreg | 2 | 4,649 | -7.4 | +1.5 | +0.1 | -0.3 | +2.8 / +7.9 | 13/18 / 11/18 |
+| B | taker | lgbm | 2 | 3,186 | -11.8 | +2.1 | -0.1 | -0.5 | +1.6 / +2.9 | 9/18 / 9/18 |
+| B | maker_entry_tp | lgbm | 2 | 3,186 | -6.7 | +2.1 | -0.1 | -0.5 | +1.6 / +2.9 | 9/18 / 9/18 |
+| B | taker | logreg | 3 | 5,606 | -12.0 | +2.0 | +0.2 | -0.4 | +2.7 / +3.3 | 12/18 / 11/18 |
+| B | maker_entry_tp | logreg | 3 | 5,606 | -6.9 | +2.0 | +0.2 | -0.4 | +2.7 / +3.3 | 12/18 / 11/18 |
+| B | taker | lgbm | 3 | 3,793 | -11.3 | +2.6 | +0.9 | -0.1 | -0.0 / +7.4 | 9/18 / 11/18 |
+| B | maker_entry_tp | lgbm | 3 | 4,220 | -7.1 | +1.8 | +0.7 | -0.3 | -0.3 / +6.4 | 10/18 / 11/18 |
+| A | taker | lgbm_tuned | 1 | 2,705 | -10.1 | +3.8 | +0.7 | -0.0 | +3.3 / -1.4 | 14/18 / 12/18 |
+| A | taker | lgbm_tuned | 2 | 2,433 | -5.6 | +8.3 | -0.7 | -1.3 | +3.7 / +11.7 | 13/18 / 14/18 |
+| A | taker | lgbm_tuned | 3 | 2,760 | -8.8 | +5.1 | -0.1 | -1.7 | +7.0 / +7.7 | 13/18 / 15/18 |
+| A | taker | lgbm_shuffled | 3 | 6,938 | -11.4 | +2.5 | +1.1 | +0.8 | +2.5 / +4.7 | 14/18 / 14/18 |
+| A | maker_entry_tp | lgbm_shuffled | 3 | 6,742 | -5.3 | +3.0 | +1.4 | +0.9 | +3.1 / +5.2 | 14/18 / 14/18 |
+<!-- /generated:phase3_step2_bps -->
 
 - **The shuffled-label control is not a pure null in bps.** Its labels are shuffled, but its threshold is still chosen on the validation slice's real net R. Its scores are fitted noise that correlates with features (ATR, time of day), so 40 threshold candidates are enough to pick up about +2.5 bps.
 - **Directional skill beyond that control:** about **+1 to +2 bps** for the untuned models, and **≈ +6 bps for tuned rung 2**. That's well short of the ~14 bps of costs.
@@ -770,11 +796,13 @@ Overall gross bps per trade (taker costs are about 14 bps per round trip for eve
 - **Validation (best trial per fold, the maximum of 30):** mean +0.025 R (r1), +0.044 (r2), +0.020 (r3); positive in 11 / 16 / 11 of 18 folds. The median trial is −0.06 / −0.05 / −0.07.
 - **Typical tuned parameters:** median num_leaves 35, min_data_in_leaf 519, learning rate 0.034, feature_fraction 0.72, λ₂ 5.7.
 
-| A, taker (test folds) | untuned LightGBM | tuned LightGBM | tuned: trades |
-|---|---|---|---|
-| rung 1 | −0.130 [−0.162, −0.098] | −0.126 [−0.164, −0.088] | 2,705 |
-| rung 2 | −0.135 [−0.169, −0.103] | **−0.093 [−0.136, −0.048]** | 2,433 |
-| rung 3 | −0.127 [−0.158, −0.096] | −0.122 [−0.160, −0.085] | 2,760 |
+<!-- generated:phase3_step2_tuning -->
+| rung | untuned LightGBM: test mean net R [95% CI] | tuned: test mean net R [95% CI] | tuned: trades | tuning trials | validation, best trial per fold (mean) | folds with best validation > 0 | validation, median trial |
+|---|---|---|---|---|---|---|---|
+| 1 | -0.130 [-0.162, -0.098] | -0.126 [-0.164, -0.088] | 2,705 | 540 | +0.025 | 11/18 | -0.062 |
+| 2 | -0.135 [-0.169, -0.103] | -0.093 [-0.136, -0.048] | 2,433 | 540 | +0.044 | 16/18 | -0.047 |
+| 3 | -0.127 [-0.158, -0.096] | -0.122 [-0.160, -0.085] | 2,760 | 540 | +0.020 | 11/18 | -0.069 |
+<!-- /generated:phase3_step2_tuning -->
 
 - **Tuning helped only rung 2,** and even there the CIs overlap with the untuned result. Every tuned model stays negative after costs.
 - **The drop from validation (≈ +0.02 to +0.04 R) to test (−0.09 to −0.13 R)** is what picking the best of 30 trials on the same slice that also sets calibration and threshold produces. It has to be accounted for, with 1,620 trials, in the deflated-Sharpe / PBO step.
@@ -799,6 +827,7 @@ New:
 - **Volatility baseline:** trades only hours above a cutoff that sits above the fold's median ATR, with all 20 seeds present.
 
 ### Full report (from `reports/phase3_step2/report.md`)
+<!-- generated:phase3_step2_report -->
 #### Label set A, cost scenario `taker`
 
 | strategy | rung | trades | mean net R [95% CI] | net bps | gross bps | return/yr | hit | PF | Sharpe | max DD |
@@ -1088,6 +1117,7 @@ Per fold, model net bps per trade minus the baseline median (random / vol filter
 | 15 | +10.3 / +8.7 | +8.9 / -14.9 | -1.0 / -2.5 | +5.4 / +17.8 | -4.5 / -7.9 | -9.6 / -4.7 |
 | 16 | +13.7 / +9.3 | +10.6 / +13.0 | +7.1 / +3.8 | -2.1 / -0.7 | -1.9 / -4.5 | -6.2 / -5.0 |
 | 17 | -5.2 / -6.1 | +5.1 / +100.6 | -8.7 / -8.6 | -1.1 / +2.9 | -7.9 / -1.9 | -8.7 / +84.2 |
+<!-- /generated:phase3_step2_report -->
 
 ## Phase 3 step 2b: CryptoBERT rung 3 (secondary) and LLM-label sanity check (2026-10-28)
 
@@ -1104,6 +1134,7 @@ Per fold, model net bps per trade minus the baseline median (random / vol filter
 - **Validation-to-test shrinkage again:** the best CryptoBERT trial per fold averaged +0.031 R on validation (positive in 12 of 18 folds), against a median trial of −0.07.
 - **Runs:** `uv run python -m mbpe.validation.cryptobert_compare {tune,evaluate}`; outputs in `reports/phase3_step2_cryptobert/`.
 
+<!-- generated:phase3_step2b_cryptobert -->
 | label set | scenario | model | scorer | trades | mean net R [95% CI] | net bps | gross bps | random: net R (median) | vol filter: net R (median) | folds won vs random | vs vol filter |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | A | taker | lgbm r3 | finbert | 3,946 | -0.127 [-0.158, -0.096] | -9.2 | +4.7 | -0.225 | -0.160 | 16/18 | 12/18 |
@@ -1116,6 +1147,7 @@ Per fold, model net bps per trade minus the baseline median (random / vol filter
 | B | maker_entry_tp | lgbm r3 | cryptobert | 4,211 | -0.060 [-0.080, -0.040] | -9.0 | -0.2 | -0.063 | -0.058 | 10/18 | 9/18 |
 | A | taker | lgbm_tuned r3 | finbert | 2,760 | -0.122 [-0.160, -0.085] | -8.8 | +5.1 | -0.211 | -0.137 | 15/18 | 10/18 |
 | A | taker | lgbm_tuned r3 | cryptobert | 2,698 | -0.140 [-0.178, -0.099] | -11.1 | +2.8 | -0.233 | -0.145 | 14/18 | 10/18 |
+<!-- /generated:phase3_step2b_cryptobert -->
 
 - **CryptoBERT is worse than FinBERT in every configuration,** with lower mean net R and lower gross bps. The confidence intervals overlap, so the gap isn't significant.
 - **In label set B, CryptoBERT's gross edge is gone:** −0.1 / −0.2 gross bps.
@@ -1128,6 +1160,7 @@ Per fold, model net bps per trade minus the baseline median (random / vol filter
 - **Scorer label:** the argmax of each scorer's class probabilities on the sample titles.
 - **Command:** `uv run python -m mbpe.labeling.agreement [LABELS_CSV]`. It also works on the human labels once they're done.
 
+<!-- generated:phase3_step2b_agreement -->
 Labels: LLM-judged (data/labeling/llm_labels.csv), 198 benchmark headlines.
 
 | scorer | n | accuracy | Cohen's kappa | macro-F1 | Spearman(score, label) |
@@ -1150,6 +1183,7 @@ Confusion matrix, cryptobert (rows: labels; columns: scorer argmax):
 | negative | 9 | 49 | 9 |
 | neutral | 13 | 58 | 21 |
 | positive | 1 | 28 | 10 |
+<!-- /generated:phase3_step2b_agreement -->
 
 
 - **FinBERT agrees moderately with the LLM labels:** κ 0.35, 60% accuracy. Most disagreements are between negative and neutral.
@@ -1159,3 +1193,81 @@ Confusion matrix, cryptobert (rows: labels; columns: scorer argmax):
 
 ### Tests
 - `tests/test_labeling.py` now has 6 tests, including Cohen's κ and macro-F1 on a hand-checked example.
+
+## Phase 3 step 3: overfitting estimate (2026-10-28, no holdout)
+
+From this section on, **every result number in PROGRESS.md and reports/FINDINGS.md comes from a generated block.** Text between `<!-- generated:… -->` markers is rebuilt by `uv run python -m mbpe.reports.progress` from committed files in `reports/`. `tests/test_progress.py` fails if a block differs from its source, or if a registered block is missing from both documents.
+
+The Phase 3 tables above (steps 1, 2 and 2b) were converted to generated blocks too. That includes the two step-2 tables first typed by hand (bps ranges and untuned-vs-tuned), now built from `bps_summary.csv`, `overall_metrics.csv` and `tuning_r*.csv`.
+
+Still hand-written:
+- the numbers in the prose of earlier sections, recorded at the time;
+- the Phase 1–2 data-description tables. Their sources are git-ignored data, not saved report files.
+
+**Run:** `uv run python -m mbpe.validation.overfitting` → `reports/phase3_step3/` (`daily_returns.csv`, `dsr.json`, `pbo.json`).
+- **Inputs:** test-fold trades of every evaluated model configuration (steps 2 and 2b; baselines and the shuffled-label control excluded).
+- **Daily returns:** 1% risk per trade, trades counted on their exit day, from the first test fold to the holdout start.
+
+### Deflated Sharpe ratio (Bailey & López de Prado 2014)
+- **N** = all tuning trials (FinBERT rungs 1–3 + CryptoBERT rung 3) + the untuned evaluated configurations. The tuned final models are the selected tuning trials, so they're not counted again.
+- **The variance of Sharpe across trials** is estimated from the evaluated configurations' test-fold Sharpes. The tuning trials only have validation scores.
+- **"Best configuration"** = the highest daily Sharpe among all evaluated configurations.
+
+<!-- generated:phase3_step3_dsr -->
+| quantity | value |
+|---|---|
+| best configuration (highest daily Sharpe in the test folds) | A/maker_entry_tp/lgbm/r3/finbert |
+| trading days in the test folds | 1,576 |
+| daily Sharpe (not annualized) / annualized | -0.0802 / -1.53 |
+| skewness / kurtosis of daily returns | +0.02 / 5.34 |
+| trials counted (N) | 2,188 = 2,160 tuning trials + 28 untuned evaluated configurations |
+| variance of daily Sharpe across evaluated configurations (V) | 0.00289 |
+| expected maximum daily Sharpe under no skill, SR* (annualized) | +0.1866 (+3.57) |
+| PSR vs 0: P(true Sharpe > 0) | 0.0008 |
+| **Deflated Sharpe ratio: P(true Sharpe > SR*)** | **0.0000** |
+<!-- /generated:phase3_step3_dsr -->
+
+- **The best configuration's Sharpe is negative,** so even before deflation the probability that its true Sharpe exceeds zero is very small.
+- **With the number of trials tried,** the Sharpe expected from luck alone is far above anything observed, so the deflated Sharpe ratio is essentially zero.
+- **Conclusion:** no evidence of a profitable strategy after accounting for selection.
+
+### Probability of backtest overfitting (CSCV)
+- **Method:** CSCV with 16 contiguous day-groups and all half/half splits.
+- **Code:** `cscv_pbo` is adapted from LLM-Auto-Trader's `src/analysis/cscv.py` (MIT, © 2026 Erfan Alimohammadi; license in `licenses/LLM-Auto-Trader-LICENSE.txt`). The change: degenerate inputs raise instead of returning 0.5, and the per-split in-sample winner is returned.
+
+<!-- generated:phase3_step3_pbo -->
+| quantity | value |
+|---|---|
+| configurations (strategies) | 32 |
+| days / sub-groups S / days per group | 1,576 / 16 / 98 |
+| CSCV splits C(S, S/2) | 12,870 |
+| **PBO: P(in-sample best ranks in the bottom half out of sample)** | **0.086** |
+| median logit of the in-sample winner's out-of-sample rank | +1.723 |
+| in-sample winner: mean daily Sharpe in sample / out of sample | -0.0708 / -0.1171 |
+| share of splits where the in-sample winner loses money out of sample | 1.000 |
+| most frequent in-sample winner (share of splits) | A/maker_entry_tp/lgbm/r3/finbert (0.48) |
+
+Within each label set x cost scenario (same costs, so the configurations are alternatives):
+
+| group | configurations | PBO | in-sample winner loses money out of sample (share of splits) |
+|---|---|---|---|
+| A/maker_entry_tp | 7 | 0.272 | 1.000 |
+| A/taker | 11 | 0.031 | 1.000 |
+| B/maker_entry_tp | 7 | 0.590 | 1.000 |
+| B/taker | 7 | 0.329 | 1.000 |
+<!-- /generated:phase3_step3_pbo -->
+
+How to read this:
+- **PBO measures selection, not profitability.** It asks whether the configuration that looks best in sample keeps ranking high out of sample. Across all configurations, the ranking is largely set by cost structure: maker costs are lower than taker, and label set B's costs in R are lower than A's. That ordering holds in every period whatever the skill, so the all-configurations PBO is low. **But the in-sample winner loses money out of sample in every split.**
+- **The within-group PBOs,** where configurations share costs and are true alternatives, range from low (A/taker: LightGBM consistently ranks above logistic regression) to above one half (B/maker: no stable winner).
+- **PBO from one dataset is itself noisy:** the CSCV splits reuse the same days. In the tests, pure-noise strategies give PBOs that vary widely from sample to sample and average one half only across many samples. So the group values are indicative only.
+- **Conclusion:** the evaluated configurations show some consistent ranking (mostly cost structure and LightGBM over logistic regression), and none of them earns money in any split. The overfitting estimate adds no reason to believe in an edge, and the deflated Sharpe ratio rules one out at this trial count.
+
+### Tests
+- `tests/test_overfitting.py` (6):
+  - PBO is near 0 when one strategy has a persistent edge, and averages ½ for pure noise;
+  - degenerate inputs raise;
+  - PSR matches the closed form for normal returns;
+  - expected max Sharpe grows with N;
+  - daily returns sum by exit day.
+- `tests/test_progress.py`: every generated table matches its source, and every registered block is used.

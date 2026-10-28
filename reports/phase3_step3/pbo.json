@@ -1,0 +1,53 @@
+{
+  "pbo": 0.08609168609168609,
+  "n_strategies": 32,
+  "n_days": 1576,
+  "n_groups": 16,
+  "rows_per_group": 98,
+  "n_splits": 12870,
+  "logit_median": 1.7227665977411037,
+  "is_sr_mean": -0.07076769442060643,
+  "oos_sr_mean": -0.11705138693849275,
+  "p_oos_loss": 1.0,
+  "top_winner": "A/maker_entry_tp/lgbm/r3/finbert",
+  "top_winner_share": 0.47785547785547783,
+  "winner_shares": {
+    "A/maker_entry_tp/lgbm/r1/finbert": 0.1773892773892774,
+    "A/maker_entry_tp/lgbm/r2/finbert": 0.08888888888888889,
+    "A/maker_entry_tp/lgbm/r3/cryptobert": 0.008158508158508158,
+    "A/maker_entry_tp/lgbm/r3/finbert": 0.47785547785547783,
+    "A/maker_entry_tp/logreg/r1/finbert": 0.005594405594405594,
+    "A/maker_entry_tp/logreg/r2/finbert": 0.009246309246309247,
+    "A/taker/lgbm_tuned/r2/finbert": 0.02999222999222999,
+    "B/maker_entry_tp/lgbm/r1/finbert": 0.044755244755244755,
+    "B/maker_entry_tp/lgbm/r2/finbert": 0.1258741258741259,
+    "B/maker_entry_tp/lgbm/r3/finbert": 0.022766122766122766,
+    "B/maker_entry_tp/logreg/r1/finbert": 0.00947940947940948
+  },
+  "by_group": [
+    {
+      "group": "A/maker_entry_tp",
+      "n_strategies": 7,
+      "pbo": 0.272027972027972,
+      "p_oos_loss": 1.0
+    },
+    {
+      "group": "A/taker",
+      "n_strategies": 11,
+      "pbo": 0.031313131313131314,
+      "p_oos_loss": 1.0
+    },
+    {
+      "group": "B/maker_entry_tp",
+      "n_strategies": 7,
+      "pbo": 0.5904428904428904,
+      "p_oos_loss": 1.0
+    },
+    {
+      "group": "B/taker",
+      "n_strategies": 7,
+      "pbo": 0.32905982905982906,
+      "p_oos_loss": 1.0
+    }
+  ]
+}
