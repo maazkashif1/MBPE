@@ -166,3 +166,20 @@ Registered before any modeling. **No further label or cost variants will be adde
 - **CryptoBERT is a secondary, reported-only comparison.** It cannot replace FinBERT based on its results (backtest, agreement or otherwise).
 - **Hand labeling is optional and no longer decides the scorer.** This supersedes the earlier plan to choose the scorer by agreement with the hand labels.
 - **Optional sanity check:** an LLM labels the 198 benchmark headlines for tone following `labeling/GUIDE.md`. These labels are **LLM-judged, not human**, kept separate from `labels.csv`, and used only to report each scorer's agreement as a sanity check. They decide nothing.
+
+## Phase 3 holdout test (pre-registered 2026-10-28, before any holdout access)
+The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md). Until this run, `data/logs/holdout_access.jsonl` does not exist.
+- **Period:** decision times from **2026-04-26 00:00 UTC** to the latest decision time with a label in both label sets (**2026-10-25 19:00 UTC** at registration; labels are not rebuilt). Reported as two test folds of about 3 months, like the walk-forward folds:
+  - holdout fold 1: 2026-04-26 → 2026-07-26 (exclusive);
+  - holdout fold 2: 2026-07-26 → the last labelled hour (inclusive).
+- **Training:** everything from 2021-01-01 before the holdout start. The same purge (training label windows may not reach the holdout), embargo, last-20% validation slice, uniqueness weights, isotonic calibration and threshold rule as the walk-forward folds.
+  - **One fit per configuration, used for both holdout folds.** Holdout fold 2 does *not* train on holdout fold 1: "everything before the holdout" is read literally, so no holdout outcome ever enters training, tuning, calibration or threshold choice.
+  - **Tuned models:** the same 30-trial Optuna study (same space, objective and seed rule, fold index 18) on this final validation slice, once per tuned configuration: FinBERT rungs 1–3 and CryptoBERT rung 3 (+120 trials, so N for any later deflated Sharpe would be 2,308).
+  - No other changes to code, features, labels or settings. The only code change is plumbing: the holdout fold, the `allow_holdout` flag, and reporting per holdout fold.
+- **Configurations:** all 32 evaluated configurations (FinBERT: label sets A/B × both cost scenarios × logreg/LightGBM × rungs 1–3, plus tuned LightGBM A/taker rungs 1–3; CryptoBERT: LightGBM rung 3 A/B × both scenarios, plus tuned A/taker), and all baselines: always-long, always-short, random entry and the volatility filter at each model's frequency (20 seeds each), and the shuffled-label control (LightGBM rung 3, label set A). Everything is reported next to its walk-forward result; nothing is dropped.
+- **Headline result:** label set A, taker costs, tuned LightGBM, rung 3 (FinBERT): mean net R over the whole holdout with its 95% block-bootstrap CI.
+- **Interpretation (decided now):**
+  - headline mean net R **≤ 0**: the negative finding is confirmed;
+  - **> 0 with a 95% CI excluding zero:** reported as unexpected but **not acted on**. One 6-month window after 2,188 trials isn't enough evidence; at most it justifies a forward test on new live data;
+  - **> 0 with a CI including zero:** inconclusive, which is consistent with no edge.
+- **Run once,** with `allow_holdout=True`, so every access is logged in `data/logs/holdout_access.jsonl`. If a bug is found afterwards, it is fixed and the holdout re-run, and **both** results are reported with an explanation.
