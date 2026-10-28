@@ -1362,3 +1362,214 @@ Net / gross bps are per trade. The random and volatility-filter baselines are me
   - the few positive ones have CIs that include zero (counts in the headline table);
   - rung 3 (FinBERT news) doesn't consistently beat rungs 1–2;
   - every always-trade baseline and the shuffled control lose money.
+
+## Phase 4 step 1: checklist extensions 4a / 4b / 4c (2026-10-28, walk-forward only, no holdout)
+
+Pre-registered in `SCOPE.md` ("Phase 4 pre-registration") and committed before any Phase 4 feature or model (03a3306). The holdout stayed closed: `data/logs/holdout_access.jsonl` is unchanged by this step.
+
+### bookDepth ingestion and gap scan
+`uv run python -m mbpe.ingest 2023-01-01 --only book_depth`, then `uv run python -m mbpe.features.phase4 scan` → `reports/phase4/book_depth_scan.json` and `book_depth_gaps.csv` (every gap over 2 min).
+- **Clean layer:** `data/clean/binance/book_depth.parquet`, one row per snapshot, with cumulative depth and notional per side and band (`bid_depth_100bp`, …).
+- **Raw files** are downloaded with SHA-256 checks. Files under 2 KB are dropped as missing days, as pre-registered.
+- **Conflicts:** two different values for the same snapshot and band raise an error.
+
+<!-- generated:phase4_book_depth_scan -->
+| | |
+|---|---|
+| days in range (first → last file) | 1,396 (2023-01-01 → 2026-10-27) |
+| raw files (SHA-256 checked) | 1,392 |
+| days without a file | 2023-02-08, 2023-02-09, 2024-04-18, 2026-10-08 |
+| files under 2 KB (counted as missing days) | 2023-01-09 (1,645 B), 2023-01-15 (1,306 B), 2023-01-16 (1,838 B), 2023-01-21 (788 B), 2024-06-12 (613 B) |
+| days without any snapshot in the clean layer | 9 |
+| snapshots / median spacing | 3,926,723 / 30 s |
+| steps over 45 s / over 2 min (staleness limit) | 29,432 / 5,887 |
+| time inside gaps over 2 min | 626 h |
+| bands present from the first snapshot | bid_depth_100bp, bid_depth_200bp, bid_depth_300bp, bid_depth_400bp, bid_depth_500bp, ask_depth_100bp, ask_depth_200bp, ask_depth_300bp, ask_depth_400bp, ask_depth_500bp |
+| bands that appear later | bid_depth_20bp, ask_depth_20bp from 2026-01-15 07:01:04+00:00 |
+| decision hours 2023-01-01 → holdout with a snapshot ≤ 2 min old | 28,584 of 29,064 (98.3%) |
+<!-- /generated:phase4_book_depth_scan -->
+
+- **The ±0.2% band only exists from mid-January 2026.** Before that, Binance's files carry 10 bands (±1 to ±5%).
+  - The pre-registered `book_imbalance_20bp` is therefore missing for most of the 4c window. It stays NaN by the missing-data rule; it was neither dropped nor replaced, since either would be a post-hoc change.
+  - LightGBM handles the NaN natively; logistic regression uses its usual median imputation plus a missing indicator.
+
+### Features
+- **4a (group `macd_ema`, 6 features):** in `mbpe/features/market.py`, so the market leakage tests cover them (synthetic data and a real 2021 slice). They were cross-checked against an independent loop implementation of the EMA recursion.
+- **4b (`nfp`, 3) and 4c (`orderbook`, 8):** in `mbpe/features/phase4.py` → `data/features/phase4.parquet`.
+- **Phase 3 is unchanged:** `market.parquet` was rebuilt with the 4a columns, and every Phase 3 column is byte-identical to before.
+- Missing shares in each feature's evaluation window (`reports/phase4/feature_missing.csv`):
+
+<!-- generated:phase4_feature_missing -->
+| feature | group | window from | hours | missing |
+|---|---|---|---|---|
+| macd_line_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| macd_signal_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| macd_hist_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| ema20_dist_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| ema50_dist_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| ema200_dist_atr | macd_ema | 2021-01-01 | 46,584 | 0.0% |
+| nfp_hours_to_next | nfp | 2021-01-01 | 46,584 | 0.0% |
+| nfp_hours_since_last | nfp | 2021-01-01 | 46,584 | 0.0% |
+| nfp_next_4h | nfp | 2021-01-01 | 46,584 | 0.0% |
+| book_imbalance_20bp | orderbook | 2023-01-01 | 29,064 | 91.8% |
+| book_imbalance_100bp | orderbook | 2023-01-01 | 29,064 | 1.7% |
+| book_imbalance_200bp | orderbook | 2023-01-01 | 29,064 | 1.7% |
+| book_imbalance_300bp | orderbook | 2023-01-01 | 29,064 | 1.7% |
+| book_imbalance_400bp | orderbook | 2023-01-01 | 29,064 | 1.7% |
+| book_imbalance_500bp | orderbook | 2023-01-01 | 29,064 | 1.7% |
+| book_depth_chg_1h | orderbook | 2023-01-01 | 29,064 | 2.4% |
+| book_depth_vs_7d_median | orderbook | 2023-01-01 | 29,064 | 1.9% |
+<!-- /generated:phase4_feature_missing -->
+
+### Evaluation
+`uv run python -m mbpe.validation.phase4` → `reports/phase4/` (`overall_metrics.csv`, `fold_metrics.csv`, `thresholds.csv`, `kill.csv`, `reproduction.csv`).
+- **Variants:**
+  - Phase 3 window: rung 3 and 4a;
+  - Phase 3 window with the NFP blackout: 4b, and rung 3 with that blackout only;
+  - 4c window (training from 2023, 10 test folds from 2024): rung 3 and 4c.
+- **Each variant:** label sets A/B × both cost scenarios × logistic regression / LightGBM (fixed settings, no tuning), with all baselines.
+- **Shuffled-label controls:** one per rung (LightGBM, label set A), each a separate run with the same seed. The label permutations are identical across rungs, so only the features differ.
+
+**Reproduction check:** rung 3 and its baselines in the Phase 3 window, re-run through the Phase 4 code, against Phase 3 step 2:
+
+<!-- generated:phase4_reproduction -->
+| | |
+|---|---|
+| configurations compared (rung 3 models, random / vol-filter seeds, always-trade, shuffled control) | 418 |
+| with a different trade count | 0 |
+| max |difference| in mean net R | 0 |
+| max |difference| in gross bps per trade | 0 |
+<!-- /generated:phase4_reproduction -->
+
+### Kill criterion (decision: label set A, taker, fixed-settings LightGBM; pooled over all test trades)
+
+<!-- generated:phase4_kill -->
+| extension | vs | trades | gross bps | shuffled control gross bps | advantage | rung 3 advantage | **gain (≥ +2.0 to pass)** | folds improved | **mean net R [95% CI]** (> 0 to pass) | passes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4a MACD/EMA | rung 3, Phase 3 window | 3,954 | +3.7 | +0.7 | +3.0 | +2.2 | **+0.8** | 13/18 | **-0.137** [-0.168, -0.104] | no |
+| 4b NFP | rung 3, Phase 3 window | 4,340 | +2.4 | -0.0 | +2.4 | +2.2 | **+0.2** | 9/18 | **-0.160** [-0.188, -0.129] | no |
+| 4c order book | rung 3, 4c window (2023+) | 2,750 | +2.5 | -1.8 | +4.3 | +3.1 | **+1.2** | 5/10 | **-0.162** [-0.201, -0.121] | no |
+| rung 3 + NFP blackout only (not a decision) | rung 3, Phase 3 window | 3,931 | +4.8 | +2.9 | +1.9 | +2.2 | **-0.3** | 7/18 | **-0.127** [-0.158, -0.095] | – (reported only) |
+<!-- /generated:phase4_kill -->
+
+**Outcome: no extension passes, so the Phase 3 finding stands.**
+- **Gain:** each extension's gain in bps advantage over the shuffled control falls short of the pre-registered +2 bps.
+- **Net R:** each has a mean net R after taker costs whose 95% CI lies entirely below zero.
+- **No forward test is triggered.** Passing would only have qualified an extension for one.
+
+How to read the gains:
+- **They partly reflect the shuffled control, not the model.** The control's gross bps moves by a few bps between feature sets, the same order as the 2 bps threshold. For example, 4a's advantage rises even though its own gross bps falls, because its shuffled control falls more.
+- **Cost still dominates.** Even the best gross edge is a fraction of the round-trip cost, as in Phase 3.
+- **The NFP blackout alone changes little.** Rung 3 with the NFP blackout trades about as before, with a slightly lower advantage.
+
+### Every configuration
+Random and volatility-filter baselines are medians over 20 seeds at the model's frequency. "Folds won" = folds where the model's mean net R beats the baseline median.
+
+<!-- generated:phase4_configs -->
+| window | label set | scenario | model | rung | trades | mean net R [95% CI] | net / gross bps | random: net R (median) | vol filter: net R (median) | folds won vs random / vol filter |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4c window (2023+) | A | maker_entry_tp | lgbm | 3 | 3,094 | -0.113 [-0.150, -0.072] | -7.6 / +0.7 | -0.152 | -0.114 | 8/10 / 6/10 |
+| 4c window (2023+) | A | maker_entry_tp | lgbm | 4c | 2,750 | -0.084 [-0.123, -0.041] | -5.9 / +2.5 | -0.127 | -0.098 | 8/10 / 4/10 |
+| 4c window (2023+) | A | maker_entry_tp | lgbm_shuffled | 3 | 3,876 | -0.178 [-0.214, -0.142] | -10.8 / -2.3 | -0.158 | -0.138 | 1/10 / 2/10 |
+| 4c window (2023+) | A | maker_entry_tp | lgbm_shuffled | 4c | 3,070 | -0.184 [-0.221, -0.144] | -11.3 / -2.8 | -0.178 | -0.138 | 5/10 / 1/10 |
+| 4c window (2023+) | A | maker_entry_tp | logreg | 3 | 3,911 | -0.116 [-0.151, -0.081] | -7.5 / +0.7 | -0.145 | -0.123 | 7/10 / 5/10 |
+| 4c window (2023+) | A | maker_entry_tp | logreg | 4c | 3,737 | -0.123 [-0.159, -0.088] | -7.5 / +0.8 | -0.157 | -0.126 | 7/10 / 6/10 |
+| 4c window (2023+) | A | taker | lgbm | 3 | 3,094 | -0.198 [-0.235, -0.158] | -13.3 / +0.7 | -0.245 | -0.186 | 9/10 / 5/10 |
+| 4c window (2023+) | A | taker | lgbm | 4c | 2,750 | -0.162 [-0.201, -0.121] | -11.5 / +2.5 | -0.217 | -0.166 | 9/10 / 4/10 |
+| 4c window (2023+) | A | taker | lgbm_shuffled | 3 | 3,748 | -0.271 [-0.305, -0.237] | -16.4 / -2.4 | -0.251 | -0.232 | 1/10 / 2/10 |
+| 4c window (2023+) | A | taker | lgbm_shuffled | 4c | 3,387 | -0.264 [-0.299, -0.227] | -15.9 / -1.8 | -0.260 | -0.223 | 5/10 / 1/10 |
+| 4c window (2023+) | A | taker | logreg | 3 | 3,690 | -0.198 [-0.233, -0.162] | -12.8 / +1.1 | -0.232 | -0.199 | 7/10 / 3/10 |
+| 4c window (2023+) | A | taker | logreg | 4c | 3,693 | -0.218 [-0.252, -0.182] | -13.7 / +0.2 | -0.250 | -0.191 | 6/10 / 5/10 |
+| 4c window (2023+) | B | maker_entry_tp | lgbm | 3 | 3,110 | -0.059 [-0.080, -0.035] | -8.2 / +0.6 | -0.070 | -0.071 | 7/10 / 5/10 |
+| 4c window (2023+) | B | maker_entry_tp | lgbm | 4c | 3,064 | -0.061 [-0.084, -0.036] | -8.7 / -0.0 | -0.069 | -0.062 | 7/10 / 6/10 |
+| 4c window (2023+) | B | maker_entry_tp | logreg | 3 | 2,614 | -0.064 [-0.089, -0.036] | -8.6 / +0.1 | -0.074 | -0.060 | 6/10 / 2/10 |
+| 4c window (2023+) | B | maker_entry_tp | logreg | 4c | 2,771 | -0.055 [-0.080, -0.031] | -6.7 / +2.1 | -0.070 | -0.062 | 7/10 / 7/10 |
+| 4c window (2023+) | B | taker | lgbm | 3 | 3,110 | -0.095 [-0.116, -0.071] | -13.3 / +0.6 | -0.108 | -0.106 | 7/10 / 5/10 |
+| 4c window (2023+) | B | taker | lgbm | 4c | 3,064 | -0.097 [-0.121, -0.073] | -13.9 / -0.0 | -0.106 | -0.095 | 7/10 / 6/10 |
+| 4c window (2023+) | B | taker | logreg | 3 | 2,686 | -0.092 [-0.118, -0.065] | -12.8 / +1.0 | -0.108 | -0.089 | 7/10 / 4/10 |
+| 4c window (2023+) | B | taker | logreg | 4c | 2,771 | -0.093 [-0.118, -0.069] | -11.8 / +2.1 | -0.109 | -0.094 | 7/10 / 7/10 |
+| Phase 3 window | A | maker_entry_tp | lgbm | 3 | 3,946 | -0.055 [-0.086, -0.024] | -3.5 / +4.7 | -0.137 | -0.102 | 16/18 / 15/18 |
+| Phase 3 window | A | maker_entry_tp | lgbm | 4a | 3,954 | -0.067 [-0.098, -0.034] | -4.5 / +3.7 | -0.130 | -0.092 | 16/18 / 8/18 |
+| Phase 3 window | A | maker_entry_tp | lgbm_shuffled | 3 | 6,742 | -0.104 [-0.130, -0.077] | -5.3 / +3.0 | -0.119 | -0.113 | 12/18 / 11/18 |
+| Phase 3 window | A | maker_entry_tp | lgbm_shuffled | 4a | 8,345 | -0.114 [-0.137, -0.090] | -6.7 / +1.6 | -0.127 | -0.126 | 13/18 / 12/18 |
+| Phase 3 window | A | maker_entry_tp | logreg | 3 | 5,771 | -0.095 [-0.122, -0.069] | -4.9 / +3.5 | -0.131 | -0.108 | 14/18 / 11/18 |
+| Phase 3 window | A | maker_entry_tp | logreg | 4a | 5,355 | -0.105 [-0.132, -0.075] | -4.1 / +4.2 | -0.141 | -0.106 | 14/18 / 11/18 |
+| Phase 3 window | A | taker | lgbm | 3 | 3,946 | -0.127 [-0.158, -0.096] | -9.2 / +4.7 | -0.225 | -0.160 | 16/18 / 12/18 |
+| Phase 3 window | A | taker | lgbm | 4a | 3,954 | -0.137 [-0.168, -0.104] | -10.1 / +3.7 | -0.218 | -0.149 | 17/18 / 8/18 |
+| Phase 3 window | A | taker | lgbm_shuffled | 3 | 6,938 | -0.208 [-0.235, -0.180] | -11.4 / +2.5 | -0.220 | -0.199 | 12/18 / 9/18 |
+| Phase 3 window | A | taker | lgbm_shuffled | 4a | 8,468 | -0.224 [-0.248, -0.201] | -13.3 / +0.7 | -0.231 | -0.224 | 11/18 / 9/18 |
+| Phase 3 window | A | taker | logreg | 3 | 5,610 | -0.181 [-0.210, -0.153] | -10.6 / +3.4 | -0.223 | -0.174 | 14/18 / 11/18 |
+| Phase 3 window | A | taker | logreg | 4a | 5,355 | -0.199 [-0.228, -0.169] | -9.8 / +4.2 | -0.238 | -0.183 | 15/18 / 10/18 |
+| Phase 3 window | B | maker_entry_tp | lgbm | 3 | 4,220 | -0.051 [-0.071, -0.032] | -7.1 / +1.8 | -0.060 | -0.057 | 11/18 / 12/18 |
+| Phase 3 window | B | maker_entry_tp | lgbm | 4a | 4,455 | -0.044 [-0.065, -0.024] | -5.8 / +3.1 | -0.067 | -0.049 | 13/18 / 9/18 |
+| Phase 3 window | B | maker_entry_tp | logreg | 3 | 5,606 | -0.058 [-0.076, -0.040] | -6.9 / +2.0 | -0.064 | -0.055 | 9/18 / 9/18 |
+| Phase 3 window | B | maker_entry_tp | logreg | 4a | 4,643 | -0.039 [-0.057, -0.022] | -3.5 / +5.4 | -0.061 | -0.050 | 13/18 / 11/18 |
+| Phase 3 window | B | taker | lgbm | 3 | 3,793 | -0.077 [-0.097, -0.056] | -11.3 / +2.6 | -0.092 | -0.078 | 11/18 / 11/18 |
+| Phase 3 window | B | taker | lgbm | 4a | 4,455 | -0.080 [-0.100, -0.059] | -10.9 / +3.1 | -0.104 | -0.080 | 14/18 / 8/18 |
+| Phase 3 window | B | taker | logreg | 3 | 5,606 | -0.096 [-0.114, -0.078] | -12.0 / +2.0 | -0.102 | -0.086 | 9/18 / 8/18 |
+| Phase 3 window | B | taker | logreg | 4a | 4,643 | -0.078 [-0.096, -0.060] | -8.6 / +5.4 | -0.099 | -0.078 | 14/18 / 8/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | lgbm | 3 | 3,931 | -0.055 [-0.087, -0.023] | -3.4 / +4.8 | -0.137 | -0.098 | 16/18 / 14/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | lgbm | 4b | 4,467 | -0.091 [-0.122, -0.060] | -6.2 / +2.0 | -0.140 | -0.112 | 16/18 / 11/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | lgbm_shuffled | 3 | 6,648 | -0.102 [-0.129, -0.074] | -5.3 / +3.0 | -0.118 | -0.110 | 12/18 / 12/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | lgbm_shuffled | 4b | 6,119 | -0.137 [-0.164, -0.108] | -8.4 / -0.1 | -0.145 | -0.135 | 9/18 / 7/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | logreg | 3 | 5,769 | -0.095 [-0.123, -0.068] | -4.8 / +3.5 | -0.132 | -0.107 | 13/18 / 11/18 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | logreg | 4b | 5,469 | -0.093 [-0.123, -0.066] | -4.3 / +4.0 | -0.132 | -0.108 | 14/18 / 8/18 |
+| Phase 3 window, + NFP blackout | A | taker | lgbm | 3 | 3,931 | -0.127 [-0.158, -0.095] | -9.1 / +4.8 | -0.225 | -0.156 | 17/18 / 12/18 |
+| Phase 3 window, + NFP blackout | A | taker | lgbm | 4b | 4,340 | -0.160 [-0.188, -0.129] | -11.5 / +2.4 | -0.230 | -0.173 | 16/18 / 10/18 |
+| Phase 3 window, + NFP blackout | A | taker | lgbm_shuffled | 3 | 6,556 | -0.202 [-0.230, -0.173] | -11.0 / +2.9 | -0.220 | -0.196 | 10/18 / 8/18 |
+| Phase 3 window, + NFP blackout | A | taker | lgbm_shuffled | 4b | 6,429 | -0.234 [-0.262, -0.206] | -14.0 / -0.0 | -0.239 | -0.221 | 8/18 / 5/18 |
+| Phase 3 window, + NFP blackout | A | taker | logreg | 3 | 5,472 | -0.182 [-0.212, -0.154] | -10.5 / +3.5 | -0.226 | -0.177 | 14/18 / 11/18 |
+| Phase 3 window, + NFP blackout | A | taker | logreg | 4b | 5,469 | -0.183 [-0.214, -0.154] | -10.0 / +4.0 | -0.225 | -0.183 | 14/18 / 8/18 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | lgbm | 3 | 4,190 | -0.052 [-0.071, -0.031] | -7.2 / +1.6 | -0.060 | -0.058 | 12/18 / 10/18 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | lgbm | 4b | 3,877 | -0.037 [-0.058, -0.015] | -5.5 / +3.3 | -0.069 | -0.063 | 12/18 / 10/18 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | logreg | 3 | 5,592 | -0.058 [-0.077, -0.040] | -6.9 / +1.9 | -0.064 | -0.057 | 9/18 / 8/18 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | logreg | 4b | 5,702 | -0.051 [-0.069, -0.033] | -5.1 / +3.7 | -0.064 | -0.061 | 13/18 / 11/18 |
+| Phase 3 window, + NFP blackout | B | taker | lgbm | 3 | 3,785 | -0.078 [-0.098, -0.058] | -11.6 / +2.3 | -0.092 | -0.078 | 11/18 / 10/18 |
+| Phase 3 window, + NFP blackout | B | taker | lgbm | 4b | 3,719 | -0.069 [-0.091, -0.049] | -10.1 / +3.9 | -0.103 | -0.091 | 13/18 / 10/18 |
+| Phase 3 window, + NFP blackout | B | taker | logreg | 3 | 5,403 | -0.092 [-0.110, -0.073] | -11.6 / +2.4 | -0.103 | -0.086 | 10/18 / 8/18 |
+| Phase 3 window, + NFP blackout | B | taker | logreg | 4b | 5,554 | -0.087 [-0.106, -0.068] | -9.9 / +4.1 | -0.102 | -0.090 | 13/18 / 10/18 |
+<!-- /generated:phase4_configs -->
+
+### Always-trade baselines
+
+<!-- generated:phase4_baselines -->
+| window | label set | scenario | baseline | trades | mean net R [95% CI] | net / gross bps |
+|---|---|---|---|---|---|---|
+| 4c window (2023+) | A | maker_entry_tp | always_long | 5,775 | -0.139 [-0.167, -0.111] | -8.6 / -0.0 |
+| 4c window (2023+) | A | maker_entry_tp | always_short | 5,723 | -0.132 [-0.160, -0.103] | -8.2 / -0.1 |
+| 4c window (2023+) | A | taker | always_long | 5,775 | -0.233 [-0.261, -0.205] | -14.2 / -0.0 |
+| 4c window (2023+) | A | taker | always_short | 5,723 | -0.226 [-0.255, -0.197] | -13.9 / -0.1 |
+| 4c window (2023+) | B | maker_entry_tp | always_long | 4,403 | -0.065 [-0.084, -0.047] | -8.9 / +0.3 |
+| 4c window (2023+) | B | maker_entry_tp | always_short | 4,367 | -0.063 [-0.083, -0.041] | -8.5 / +0.1 |
+| 4c window (2023+) | B | taker | always_long | 4,403 | -0.104 [-0.123, -0.085] | -14.1 / +0.3 |
+| 4c window (2023+) | B | taker | always_short | 4,367 | -0.102 [-0.122, -0.081] | -13.6 / +0.1 |
+| Phase 3 window | A | maker_entry_tp | always_long | 10,699 | -0.145 [-0.165, -0.122] | -9.0 / -0.5 |
+| Phase 3 window | A | maker_entry_tp | always_short | 10,613 | -0.132 [-0.154, -0.110] | -8.1 / +0.1 |
+| Phase 3 window | A | taker | always_long | 10,699 | -0.239 [-0.260, -0.217] | -14.7 / -0.5 |
+| Phase 3 window | A | taker | always_short | 10,613 | -0.227 [-0.249, -0.204] | -13.7 / +0.1 |
+| Phase 3 window | B | maker_entry_tp | always_long | 8,179 | -0.066 [-0.081, -0.052] | -9.3 / -0.1 |
+| Phase 3 window | B | maker_entry_tp | always_short | 8,156 | -0.068 [-0.082, -0.054] | -9.2 / -0.6 |
+| Phase 3 window | B | taker | always_long | 8,179 | -0.105 [-0.120, -0.091] | -14.4 / -0.1 |
+| Phase 3 window | B | taker | always_short | 8,156 | -0.107 [-0.121, -0.092] | -14.4 / -0.6 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | always_long | 10,673 | -0.145 [-0.166, -0.123] | -9.0 / -0.5 |
+| Phase 3 window, + NFP blackout | A | maker_entry_tp | always_short | 10,576 | -0.132 [-0.153, -0.111] | -8.0 / +0.1 |
+| Phase 3 window, + NFP blackout | A | taker | always_long | 10,673 | -0.239 [-0.261, -0.217] | -14.7 / -0.5 |
+| Phase 3 window, + NFP blackout | A | taker | always_short | 10,576 | -0.227 [-0.248, -0.205] | -13.7 / +0.1 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | always_long | 8,161 | -0.067 [-0.082, -0.052] | -9.4 / -0.2 |
+| Phase 3 window, + NFP blackout | B | maker_entry_tp | always_short | 8,142 | -0.069 [-0.084, -0.055] | -9.3 / -0.7 |
+| Phase 3 window, + NFP blackout | B | taker | always_long | 8,161 | -0.106 [-0.121, -0.091] | -14.5 / -0.2 |
+| Phase 3 window, + NFP blackout | B | taker | always_short | 8,142 | -0.108 [-0.123, -0.094] | -14.4 / -0.7 |
+<!-- /generated:phase4_baselines -->
+
+### Not done in this step: the live depth collector
+`mbpe/sources/binance_depth_live.py` was **not written.** The REST order book returns at most 1,000 levels per side, which reach well short of even the archive's smallest band (FEASIBILITY.md, "Phase 4: live order book"). A 30-second REST poller can't rebuild any of the 12 bands. The options are written up there, for a decision.
+
+### Tests
+- `tests/test_phase4_features.py` (8):
+  - truncation leakage on a synthetic book with a missing day and 90-second / 3-minute gaps, and on a real 2024 slice around the missing 2024-04-18;
+  - the 2-minute staleness edge, and that a snapshot at t is never used;
+  - hand-computed imbalance, 1 h change and 7-day median;
+  - NFP features;
+  - a peeking feature is caught;
+  - bookDepth pivot (absent band → null, conflicting duplicates raise).
+- `tests/test_features.py` now also accepts group `macd_ema`, and its leakage tests cover the 4a features.

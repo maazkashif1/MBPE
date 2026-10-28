@@ -316,6 +316,146 @@ def holdout_headline() -> str:
     return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
 
 
+# ---------- Phase 4 ----------
+
+P4 = R / "phase4"
+RUNG_NAME = {0: "–", 3: "3", 41: "4a", 42: "4b", 43: "4c"}
+VARIANT_NAME = {
+    "phase3": "Phase 3 window",
+    "phase3_nfp_blackout": "Phase 3 window, + NFP blackout",
+    "orderbook": "4c window (2023+)",
+}
+
+
+@block("phase4_book_depth_scan")
+def phase4_book_depth_scan() -> str:
+    d = json.loads((P4 / "book_depth_scan.json").read_text())
+    late = sorted({v for v in d["band_first_seen"].values()} - {min(d["band_first_seen"].values())})
+    rows = [
+        ("days in range (first → last file)", f"{d['days']:,} ({d['first_day']} → {d['last_day']})"),
+        ("raw files (SHA-256 checked)", f"{d['raw_files']:,}"),
+        ("days without a file", ", ".join(d["missing_days"]) or "none"),
+        (
+            "files under 2 KB (counted as missing days)",
+            ", ".join(f"{k} ({v:,} B)" for k, v in d["small_files"].items()) or "none",
+        ),
+        ("days without any snapshot in the clean layer", f"{len(d['days_without_snapshots'])}"),
+        ("snapshots / median spacing", f"{d['snapshots']:,} / {d['median_step_s']:.0f} s"),
+        (
+            "steps over 45 s / over 2 min (staleness limit)",
+            f"{d['steps_over_45s']:,} / {d['gaps_over_2min']:,}",
+        ),
+        ("time inside gaps over 2 min", f"{d['gap_hours_over_2min']:,.0f} h"),
+        (
+            "bands present from the first snapshot",
+            ", ".join(k for k, v in d["band_first_seen"].items() if v == min(d["band_first_seen"].values())),
+        ),
+        (
+            "bands that appear later",
+            "; ".join(
+                f"{', '.join(k for k, v in d['band_first_seen'].items() if v == t)} from {t}" for t in late
+            )
+            or "none",
+        ),
+        (
+            "decision hours 2023-01-01 → holdout with a snapshot ≤ 2 min old",
+            f"{d['hours_with_fresh_snapshot']:,} of {d['hours_2023_to_holdout']:,} "
+            f"({d['hours_with_fresh_snapshot'] / d['hours_2023_to_holdout']:.1%})",
+        ),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+@block("phase4_feature_missing")
+def phase4_feature_missing() -> str:
+    d = pl.read_csv(P4 / "feature_missing.csv")
+    out = ["| feature | group | window from | hours | missing |", "|---|---|---|---|---|"]
+    for r in d.iter_rows(named=True):
+        out.append(
+            f"| {r['feature']} | {r['group']} | {r['window_start']} | {r['hours']:,} "
+            f"| {r['missing_share']:.1%} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase4_kill")
+def phase4_kill() -> str:
+    d = pl.read_csv(P4 / "kill.csv")
+    out = [
+        "| extension | vs | trades | gross bps | shuffled control gross bps | advantage | rung 3 advantage "
+        "| **gain (≥ +2.0 to pass)** | folds improved | **mean net R [95% CI]** (> 0 to pass) | passes |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in d.iter_rows(named=True):
+        verdict = ("**yes**" if r["pass"] else "no") if r["decides"] else "– (reported only)"
+        out.append(
+            f"| {r['extension']} | rung 3, {VARIANT_NAME[r['base_variant']]} | {r['trades']:,} "
+            f"| {fmt(r['gross_bps'], 1)} | {fmt(r['shuffled_gross_bps'], 1)} | {fmt(r['advantage_bps'], 1)} "
+            f"| {fmt(r['base_advantage_bps'], 1)} | **{fmt(r['gain_bps'], 1)}** "
+            f"| {r['folds_improved']}/{r['folds']} "
+            f"| **{fmt(r['mean_R'])}** [{fmt(r['ci_lo'])}, {fmt(r['ci_hi'])}] | {verdict} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase4_reproduction")
+def phase4_reproduction() -> str:
+    d = pl.read_csv(P4 / "reproduction.csv")
+    rows = [
+        ("configurations compared (rung 3 models, random / vol-filter seeds, always-trade, shuffled control)",
+         f"{d.height:,}"),
+        ("with a different trade count", f"{(d['trades'] != d['trades_p4']).sum()}"),
+        ("max |difference| in mean net R", f"{d['diff_mean_R'].max():.2g}"),
+        ("max |difference| in gross bps per trade", f"{d['diff_gross_bps'].max():.2g}"),
+    ]  # fmt: skip
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+@block("phase4_configs")
+def phase4_configs() -> str:
+    ov = pl.read_csv(P4 / "overall_metrics.csv")
+    pf = pl.read_csv(P4 / "fold_metrics.csv")
+    m = ov.filter((pl.col("seed") == -1) & pl.col("strategy").is_in(["logreg", "lgbm", "lgbm_shuffled"]))
+    out = [
+        "| window | label set | scenario | model | rung | trades | mean net R [95% CI] | net / gross bps "
+        "| random: net R (median) | vol filter: net R (median) | folds won vs random / vol filter |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in m.sort("variant", "label_set", "scenario", "strategy", "rung").iter_rows(named=True):
+        key = {k: r[k] for k in ("variant", "label_set", "scenario", "rung")}
+        base, won = [], []
+        for b in ("random", "volfilter"):
+            sel = [pl.col(k) == v for k, v in key.items()] + [pl.col("strategy") == f"{b}_vs_{r['strategy']}"]
+            base.append(fmt(ov.filter(*sel)["mean_R"].median()))
+            bf = pf.filter(*sel).group_by("fold").agg(med=pl.col("mean_R").median())
+            mf = pf.filter(*[pl.col(k) == v for k, v in key.items()], pl.col("strategy") == r["strategy"],
+                           pl.col("seed") == -1, pl.col("trades") > 0)  # fmt: skip
+            j = mf.join(bf, on="fold")
+            n_folds = pf.filter(pl.col("variant") == r["variant"])["fold"].n_unique()
+            won.append(f"{(j['mean_R'] > j['med']).sum()}/{n_folds}" if bf.height else "–")
+        out.append(
+            f"| {VARIANT_NAME[r['variant']]} | {r['label_set']} | {r['scenario']} | {r['strategy']} "
+            f"| {RUNG_NAME[r['rung']]} | {r['trades']:,} | {_ci(r)} | {_bps(r)} | {base[0]} | {base[1]} "
+            f"| {' / '.join(won)} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase4_baselines")
+def phase4_baselines() -> str:
+    ov = pl.read_csv(P4 / "overall_metrics.csv").filter(pl.col("strategy").str.starts_with("always"))
+    out = [
+        "| window | label set | scenario | baseline | trades | mean net R [95% CI] | net / gross bps |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in ov.sort("variant", "label_set", "scenario", "strategy").iter_rows(named=True):
+        out.append(
+            f"| {VARIANT_NAME[r['variant']]} | {r['label_set']} | {r['scenario']} | {r['strategy']} "
+            f"| {r['trades']:,} | {_ci(r)} | {_bps(r)} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 

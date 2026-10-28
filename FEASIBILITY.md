@@ -594,3 +594,17 @@ Added to `data/reference/macro_events.csv` as `event = NFP`, in the same format 
 - **Tests:** `tests/test_reddit_live.py` (3, offline): only the static fields are stored, the first sighting is kept, a gap is flagged, and missing credentials raise.
 - **Not started.** It will run once you confirm the credentials are set. The first live run is also the first check against the real API (rate limits, field names).
 - **Reddit's terms:** the API is free for non-commercial research at low rates, but the Data API terms apply. Collected titles should stay local (`data/` is git-ignored), as GDELT data does.
+
+## Phase 4: live order book (written by hand 2026-10-28)
+
+**Finding: the public REST order book can't reproduce the bookDepth bands.**
+- `GET /fapi/v1/depth?symbol=BTCUSDT&limit=1000` (1,000 is the maximum) was probed once on 2026-10-28. Its 1,000 bid and ask levels reached only about **−0.15% / +0.16%** from mid.
+- That's short of even bookDepth's smallest band (±0.2%), and far from ±1–5%. A REST poller would record no complete band at all.
+- **So `mbpe/sources/binance_depth_live.py` was not written.** A collector that only produces gaps would mislead.
+
+Options (your call):
+1. **Use the archive for forward data (recommended).** bookDepth is published daily, with about a day's delay. A forward test on post-2026-10-25 data only needs data that wasn't seen in development, not real-time data, and the archive gives exactly the bands the models were trained on. No parity problem.
+2. **Local book from the WebSocket diff stream** (`btcusdt@depth@100ms` plus a REST snapshot), run as a long-lived process.
+   - Levels beyond the first 1,000 become known only once they change, so the deep bands start incomplete and stay biased low for levels that rarely change.
+   - It would need a parity study before any use. Only relevant for live trading, which is out of scope.
+3. **Keep only the bands REST can reach.** None of the 12 qualifies, so this would mean new feature definitions and a new pre-registration.
