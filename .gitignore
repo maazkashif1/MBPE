@@ -19,3 +19,4 @@ application_default_credentials.json
 service-account*.json
 client_secret*.json
 .config/gcloud/
+mlruns/

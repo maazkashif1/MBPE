@@ -1,0 +1,29 @@
+# Evaluation protocol (Phase 3; pre-registered in SCOPE.md). Loaded by mbpe.validation.walk_forward.load_eval_config.
+eval_start: 2021-01-01T00:00:00Z
+holdout_start: 2026-04-26T00:00:00Z    # never evaluated without allow_holdout (logged)
+first_test_fold: 2022-01-01T00:00:00Z
+fold_months: 3
+embargo_hours: 24
+val_fraction: 0.2
+min_val_trades: 100
+threshold_candidates: 40          # quantiles of validation probabilities searched for the threshold
+blackout_before_minutes: 30       # entry blocked if a CPI/FOMC release is in [entry - 30 min, entry + horizon]
+blackout_horizon_minutes: 240
+latency_minutes: 1
+risk_per_trade: 0.01
+random_seeds: 20
+bootstrap_block: 10               # trades per block in the block bootstrap
+bootstrap_samples: 2000
+lgbm:
+  objective: binary
+  num_leaves: 15
+  min_data_in_leaf: 200
+  learning_rate: 0.03
+  feature_fraction: 0.7
+  verbosity: -1
+  seed: 7
+  deterministic: true
+  num_threads: 4
+lgbm_max_rounds: 3000
+lgbm_early_stopping: 100
+logreg_C: 1.0

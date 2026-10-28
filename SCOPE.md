@@ -128,3 +128,20 @@ Registered before any modeling. **No further label or cost variants will be adde
 - **News features are computed per keyword group** (crypto, macro); a row with both counts in both.
 - **The sentiment model is `default_sentiment` in `config/news.yaml`** (FinBERT). Switching models is a config change plus a rebuild, not a code change.
 - **Sentiment and macro tone count each near-duplicate cluster once** (the mean of its titles available by t). Empty titles count toward volume only.
+
+## Evaluation protocol (pre-registered 2026-10-28, before any model results)
+- **Holdout:** decision times from **2026-04-26 00:00 UTC** onward. Code-level guard: loading or evaluating holdout rows raises unless an explicit `allow_holdout` flag is passed. Every such access is appended to `data/logs/holdout_access.jsonl`.
+- **Evaluation window:** 2021-01-01 to the holdout start.
+- **Walk-forward:**
+  - test folds are consecutive 3-month blocks from 2022-01-01 to the holdout start (the last is the partial block Apr 1–25, 2026);
+  - training is an expanding window of everything from 2021-01-01 before the fold;
+  - purge: drop training rows whose label window (decision time → exit time) overlaps the test fold;
+  - embargo: 24 h after each test fold. With forward-only folds no training row follows a test fold, so it never binds; it's kept in code for generality;
+  - validation: the last 20% of each training window, purged the same way, used only for early stopping, calibration and the threshold;
+  - sample weights: average uniqueness of each label over its window (1 / number of concurrent labels, per side).
+- **Ablation rungs:** (1) technical, (2) technical + derivatives, (3) technical + derivatives + news + calendar.
+- **Position rule:** at most one open position across both sides. While a trade is open, new signals are ignored. If long and short both signal in the same hour, neither is taken.
+- **Threshold rule:** per fold and side, choose the probability threshold on the validation slice that maximizes mean net R, with ≥ 100 validation trades; otherwise that side doesn't trade in that fold.
+- **Blackout** applies to every strategy, baselines included. Operational form: the exit time isn't known at entry, so an entry is blocked if a CPI or FOMC release falls in **[entry − 30 min, entry + 4 h]** (4 h = the label horizon). This blocks a superset of the "entry − 30 min to exit" rule without using the outcome.
+- **Training target:** `label` (net R > 0 under taker costs), for both cost scenarios. Each cost scenario selects its own threshold and is evaluated on its own net R.
+- **Reporting:** every result for both label sets (A, B) × both cost scenarios × all rungs × all models, per fold and overall. No configuration is dropped from the report.
