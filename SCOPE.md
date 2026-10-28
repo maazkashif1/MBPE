@@ -249,6 +249,14 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Change:** any forward test of order-book features uses the archive `bookDepth` daily files (published about a day late), instead of the live depth collector named in the Phase 4 pre-registration.
   - **Reason:** the public REST order book returns at most 1,000 levels per side, which reach only about ±0.15% from mid. That's short of every `bookDepth` band (±0.2% to ±5%), so a REST poller can't rebuild them (FEASIBILITY.md, "Phase 4: live order book").
   - **Effect:** none on any result. It was decided after the evaluation, and no extension passed, so no forward test was triggered.
+- **2026-10-28 (Phase 5, after step 1 labels and always-trade baselines, before any Phase 5 model): drift interpretation rule.**
+  - **The pass criterion is unchanged.**
+  - **Added reporting:** the headline (rung 3 LightGBM, taker, pooled over all test trades) is reported next to:
+    - **always-long** (step 1's definition: one position at a time, no blackout);
+    - a **random long-only baseline** at the headline's trade frequency (20 seeds): in each fold, random long entries with probability equal to the headline's combined test signal share (long + short), under the same position rule.
+  - **Interpretation rule:** if the headline passes the criterion but its mean net R (taker, pooled) does **not exceed** always-long's, the result is reported as **"drift exposure, not predictive edge"**. The forward test is still triggered as pre-registered, but every report of the result must state this.
+  - **Also reported:** the share of the model's trades that are long, for the headline and every model configuration.
+  - **Reason:** step 1 showed that always-long is close to break-even after taker costs at this horizon, so a model that mostly goes long could pass without directional skill.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
