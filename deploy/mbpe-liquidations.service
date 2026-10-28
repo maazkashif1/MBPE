@@ -1,0 +1,17 @@
+# systemd service for the long-running Binance liquidation collector (WebSocket). NOT installed.
+# Copy to ~/.config/systemd/user/, adjust paths, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now mbpe-liquidations.service
+# The collector reconnects by itself; Restart= covers crashes. Coverage gaps are recorded in coverage.jsonl.
+[Unit]
+Description=MBPE Binance BTCUSDT liquidation collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/path/to/MBPE
+ExecStart=/usr/local/bin/uv run python -m mbpe.sources.liquidations_live
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -64,6 +64,10 @@ def synthetic(days: int = 70, seed: int = 1) -> dict[str, pl.DataFrame]:
     ft = (
         start + np.arange(0, n * MIN, 8 * HOUR, dtype=np.int64) + rng.integers(0, 6, n // 480 + 1)[: n // 480]
     )
+    mark_keep = np.ones(n, bool)
+    mark_keep[38 * 1440 + 300 : 38 * 1440 + 420] = False
+    prem_keep = rng.uniform(size=n) > 0.02
+    prem_keep[41 * 1440 + 600 : 41 * 1440 + 780] = False
     return {
         "futures_klines_1m": klines(1.0, fut_keep),
         "spot_klines_1m": klines(0.9995, spot_keep),
@@ -77,6 +81,17 @@ def synthetic(days: int = 70, seed: int = 1) -> dict[str, pl.DataFrame]:
                 "last_funding_rate": rng.normal(1e-4, 2e-4, len(ft)),
             }
         ).with_columns(pl.col("calc_time").cast(UTC_MS)),
+        # Phase 6: mark price (a 2 h outage on day 38) and a signed premium index (a 3 h outage on day 41,
+        # plus ~2% missing minutes so the 80% window-coverage rule is exercised)
+        "mark_price_1m": klines(1.0001, mark_keep),
+        "premium_index_1m": pl.DataFrame(
+            {
+                "open_time": t[prem_keep],
+                **{c: rng.normal(1e-4, 3e-4, n)[prem_keep] for c in ("open", "high", "low", "close")},
+                "volume": np.zeros(prem_keep.sum()),
+                "taker_buy_volume": np.zeros(prem_keep.sum()),
+            }
+        ).with_columns(pl.col("open_time").cast(UTC_MS)),
     }
 
 
@@ -107,16 +122,19 @@ def assert_no_leakage(data: dict[str, pl.DataFrame], times: np.ndarray) -> None:
 
 def test_every_feature_has_metadata():
     for f in REGISTRY.values():
-        assert f.group in {"technical", "derivatives", "macd_ema"}, f.name
+        assert f.group in {"technical", "derivatives", "macd_ema", "mark_premium"}, f.name
         assert set(f.inputs) <= set(DATASETS), f.name
 
 
 def test_no_leakage_synthetic():
     data = synthetic()
     start = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
-    near_gaps = [start + (35 * 24 + h) * HOUR for h in range(0, 6)] + [
-        start + (40 * 24 + h) * HOUR for h in range(5)
-    ]
+    near_gaps = (
+        [start + (35 * 24 + h) * HOUR for h in range(0, 6)]
+        + [start + (40 * 24 + h) * HOUR for h in range(5)]
+        + [start + (38 * 24 + h) * HOUR for h in range(4, 9)]  # mark-price outage
+        + [start + (41 * 24 + h) * HOUR for h in range(9, 15)]  # premium outage
+    )
     times = decision_times(data, N_TIMES, seed=0, extra=near_gaps)
     assert len(times) >= N_TIMES
     assert_no_leakage(data, times)
@@ -178,3 +196,26 @@ def test_oi_price_quadrant_matches_signs():
         assert (q.filter(ok) == expected.filter(ok).cast(pl.Float64)).all(), w
         assert q.filter(~ok).is_null().all(), w
         assert set(q.drop_nulls().unique().to_list()) <= {1.0, 2.0, 3.0, 4.0}
+
+
+def test_mark_premium_values_and_outages():
+    data = synthetic(days=45, seed=8)
+    start = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
+    in_mark_gap, in_prem_gap = start + (38 * 24 + 7) * HOUR, start + (41 * 24 + 13) * HOUR
+    ok = start + 20 * 24 * HOUR
+    names = ["basis_mark_bps", "premium_last_bps", "premium_mean_1h_bps", "premium_mean_8h_bps"]
+    df = build_features(data, CFG, at=np.array([ok, in_mark_gap, in_prem_gap]), names=names)
+    a, b, c = df.iter_rows(named=True)
+    assert abs(a["basis_mark_bps"] - (1 / 1.0001 - 1) * 1e4) < 1e-6  # futures vs a 1 bp higher mark
+    assert b["basis_mark_bps"] is None and b["premium_last_bps"] is not None  # mark stale, premium fine
+    assert c["premium_last_bps"] is None and c["premium_mean_1h_bps"] is None  # premium outage -> NaN
+    assert c["premium_mean_8h_bps"] is None  # 3 of 8 hours missing: below the 80% rule
+    # coverage edge of the 8 h window after the 10:00-13:00 gap: at 19:00 2 h are missing (75%) -> NaN;
+    # at 20:00 1 h is missing (~86% after the random 2% gaps) -> a value
+    edge = build_features(
+        data, CFG, at=np.array([start + (41 * 24 + 19) * HOUR, start + (41 * 24 + 20) * HOUR]),
+        names=["premium_mean_8h_bps"],
+    )["premium_mean_8h_bps"]  # fmt: skip
+    assert edge[0] is None and edge[1] is not None
+    p = data["premium_index_1m"].filter(pl.col("open_time").dt.epoch("ms").is_between(ok - HOUR, ok - 1))
+    assert a["premium_mean_1h_bps"] == pytest.approx(p["close"].mean() * 1e4)

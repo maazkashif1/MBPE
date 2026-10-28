@@ -64,7 +64,9 @@ def synthetic_news(days: int = 20, outage_day: int = 12, seed: int = 0) -> tuple
             title = (
                 ""
                 if rng.uniform() < 0.03
-                else f"story {story} on {kind} markets" + "~" * int(rng.integers(0, 3))
+                else f"story {story} on {kind} markets"
+                + {0: " after SEC lawsuit", 5: " as exchange hacked"}.get(int(story % 10), "")
+                + "~" * int(rng.integers(0, 3))
             )
             rows.append(
                 (
@@ -111,7 +113,7 @@ def assert_equal_at(a: pl.DataFrame, b: pl.DataFrame, where: str) -> None:
 
 
 def test_every_feature_has_metadata():
-    assert {f.group for f in NEWS_REGISTRY.values()} == {"news", "calendar"}
+    assert {f.group for f in NEWS_REGISTRY.values()} == {"news", "calendar", "regulatory"}
     assert all(f.inputs for f in NEWS_REGISTRY.values())
 
 
@@ -158,7 +160,11 @@ def test_outage_gives_nan_not_zero():
     outage = START + timedelta(days=12)
     df = features(rows, cov, [ms(outage + timedelta(hours=12)), ms(outage + timedelta(hours=30))])
     mid, after = df.row(0, named=True), df.row(1, named=True)
-    news = [n for n, f in NEWS_REGISTRY.items() if f.group == "news" and not n.startswith("news_cov")]
+    news = [
+        n
+        for n, f in NEWS_REGISTRY.items()
+        if f.group in ("news", "regulatory") and not n.startswith("news_cov")
+    ]
     assert [n for n in news if mid[n] is not None] == []  # every news feature missing inside the outage
     assert (
         mid["news_cov_1h"] == 0.0 and mid["news_cov_24h"] == 0.5
@@ -218,7 +224,11 @@ def test_real_mid_2025_outage_is_nan():
     at = [ms(datetime(2025, 6, d, h, tzinfo=UTC)) for d, h in ((16, 0), (20, 12), (25, 6), (30, 23))]
     at.append(ms(datetime(2025, 7, 5, 12, tzinfo=UTC)))  # after: 1h-24h back, 7-day baseline still short
     df = build_news_features(inp.prep, inp.coverage, inp.events, load_news_config(), at=np.array(at))
-    news = [n for n, f in NEWS_REGISTRY.items() if f.group == "news" and not n.startswith("news_cov")]
+    news = [
+        n
+        for n, f in NEWS_REGISTRY.items()
+        if f.group in ("news", "regulatory") and not n.startswith("news_cov")
+    ]
     for r in df.head(4).iter_rows(named=True):
         assert [n for n in news if r[n] is not None] == [], r["decision_time"]
         assert r["news_cov_24h"] == 0.0
@@ -258,3 +268,45 @@ def test_phase3_calendar_ignores_other_events():
     assert len(cal) == len(utc("CPI")) + len(utc("FOMC"))
     nfp = utc("NFP").str.strptime(pl.Datetime("ms", "UTC"), "%Y-%m-%d %H:%M").dt.epoch("ms").to_numpy()
     assert len(nfp) and not np.isin(nfp, cal).any()
+
+
+def test_regulatory_and_major_keyword_flags():
+    import re
+
+    from mbpe.features.news import MAJOR_PATTERN, REGULATORY_PATTERN
+
+    reg = [
+        "SEC sues exchange",
+        "Spot bitcoin ETFs see inflows",
+        "Senate passes stablecoin bill",
+        "Regulators fined the firm",
+        "Country bans crypto mining",
+        "Court approves settlement",
+    ]
+    not_reg = [
+        "Bill Gates on crypto",
+        "Bitcoin hits a second high",
+        "Fine-tuned trading bots",
+        "The sec-ond wave",
+        "Banana prices",
+        "Approximately 5% up",
+    ]
+    major = [
+        "Exchange hacked for $100m",
+        "Bitcoin halving nears",
+        "Lender files for bankruptcy",
+        "USDC depegs",
+    ]
+    assert all(re.search(REGULATORY_PATTERN, t) for t in reg)
+    assert not any(re.search(REGULATORY_PATTERN, t) for t in not_reg)
+    assert all(re.search(MAJOR_PATTERN, t) for t in major)
+    assert not re.search(MAJOR_PATTERN, "Hackathon winners announced")
+
+
+def test_regulatory_features_count_new_clusters_once():
+    rows, cov = synthetic_news(days=10, outage_day=99)
+    at = times(30, seed=7, first_day=3, last_day=10)
+    df = features(rows, cov, at)
+    assert (df["reg_new_clusters_24h"].drop_nulls() >= 0).all() and df["reg_new_clusters_24h"].sum() > 0
+    assert (df["reg_new_clusters_24h"] <= df["news_crypto_new_clusters_24h"]).all()
+    assert df["reg_share_24h"].drop_nulls().is_between(0, 1).all()

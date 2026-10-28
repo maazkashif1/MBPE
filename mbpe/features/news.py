@@ -13,6 +13,11 @@ News (group "news"):
   toward volume only (no score, no tone).
 - The sentiment model is `default_sentiment` in config/news.yaml; switching models is a config change.
 
+Regulatory (group "regulatory", Phase 6): new near-duplicate clusters among crypto-group rows whose title
+matches REGULATORY_PATTERN (regulatory actions) or MAJOR_PATTERN (major announcements: hacks, bankruptcies,
+halving, ...), per window, with the same availability and coverage gating as the news features. The keyword
+lists are fixed in SCOPE.md (Phase 6, Workstream A definitions) before any Phase 6 model.
+
 Calendar (group "calendar"): from data/reference/macro_events.csv (US CPI releases and FOMC statements at
 their actual UTC times; see SCOPE.md for the rescheduling limitation).
 
@@ -39,6 +44,16 @@ GROUPS = ("crypto", "macro")
 WINDOWS = {"1h": HOUR, "4h": 4 * HOUR, "24h": DAY}
 NEWS_INPUTS = ("gdelt_rows", "gdelt_coverage", "news_dedup", "sentiment")
 CAL_INPUTS = ("macro_events",)
+# Phase 6 regulatory / major-announcement flags on titles (word boundaries; acronyms case-sensitive)
+REGULATORY_PATTERN = (
+    r"\b(?:SEC|CFTC|ETFs?)\b|(?i:\b(?:regulators?|regulatory|regulations?|regulated?|regulates|lawsuits?|sues?|sued|"
+    r"indict(?:ed|ment)?|fined|bans?|banned|crackdown|enforcement|legislation|lawmakers|congress|senate|"
+    r"approv(?:al|e|es|ed)|sanctions?|sanctioned|licen[cs]es?|licen[cs]ed|subpoenas?)\b)"
+)
+MAJOR_PATTERN = (
+    r"(?i:\b(?:hacks?|hacked|exploits?|exploited|breach(?:ed)?|stolen|halving|bankrupt(?:cy)?|insolven(?:cy|t)|"
+    r"delist(?:s|ed|ing)?|collapses?|collapsed|outages?|depegs?|depegged)\b)"
+)
 
 
 def label_ms(col: str = "DATE") -> pl.Expr:
@@ -62,7 +77,11 @@ def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | N
         norm=pl.col("title").map_elements(normalize_title, return_dtype=pl.String),
         new_cluster=pl.col("match_sim").is_null(),
         tone=pl.col("V2Tone").str.split(",").list.first().cast(pl.Float64, strict=False),
-    ).with_columns(empty=pl.col("norm") == "")
+    ).with_columns(
+        empty=pl.col("norm") == "",
+        reg=pl.col("crypto") & pl.col("title").str.contains(REGULATORY_PATTERN),
+        major=pl.col("crypto") & pl.col("title").str.contains(MAJOR_PATTERN),
+    )
     if scores is not None:
         df = df.join(scores.select("norm", "score"), on="norm", how="left")
     else:
@@ -72,9 +91,9 @@ def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | N
         score=pl.when(pl.col("empty")).then(None).otherwise("score"),
         tone=pl.when(pl.col("empty")).then(None).otherwise("tone"),
     )
-    return df.select("avail", "crypto", "macro", "empty", "new_cluster", "cluster_id", "score", "tone").sort(
-        "avail"
-    )
+    return df.select(
+        "avail", "crypto", "macro", "reg", "major", "empty", "new_cluster", "cluster_id", "score", "tone"
+    ).sort("avail")
 
 
 def load_calendar(path: Path = CALENDAR_PATH, events: tuple[str, ...] = ("CPI", "FOMC")) -> np.ndarray:
@@ -97,6 +116,7 @@ class NewsCtx:
         self.events = events
         self.a = prep["avail"].to_numpy()
         self.mask = {g: prep[g].to_numpy() for g in GROUPS}
+        self.flag = {f: prep[f].to_numpy() for f in ("reg", "major")}
         self.new = prep["new_cluster"].to_numpy()
         self.cid = prep["cluster_id"].to_numpy()
         self.score = prep["score"].fill_null(np.nan).to_numpy()
@@ -241,6 +261,22 @@ for _w in ("4h", "24h"):
     register(f"news_macro_tone_{_w}", "news", NEWS_INPUTS)(
         lambda ctx, n=WINDOWS[_w]: ctx.cluster_stats("macro", n, "tone")["mean"]
     )
+
+
+# --- regulatory (Phase 6): new clusters with a regulatory / major-announcement title, gated by coverage
+
+for _f, _ws in (("reg", ("1h", "4h", "24h")), ("major", ("4h", "24h"))):
+    for _w in _ws:
+        register(f"{_f}_new_clusters_{_w}", "regulatory", NEWS_INPUTS)(
+            lambda ctx, f=_f, n=WINDOWS[_w]: _gated(ctx, ctx.count(ctx.flag[f] & ctx.new, n), n)
+        )
+register("reg_share_24h", "regulatory", NEWS_INPUTS)(
+    lambda ctx: _gated(
+        ctx,
+        safe_div(ctx.count(ctx.flag["reg"] & ctx.new, DAY), ctx.count(ctx.mask["crypto"] & ctx.new, DAY)),
+        DAY,
+    )
+)
 
 
 def _next_event(ctx: NewsCtx) -> np.ndarray:

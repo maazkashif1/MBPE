@@ -64,6 +64,8 @@ _KLINE = {
     "count": pa.Column(pl.Int64, _nonneg),
 }
 
+_PREMIUM = {**_KLINE, **{c: pa.Column(pl.Float64) for c in ("open", "high", "low", "close")}}  # signed
+
 METRICS_RATIOS = (
     "count_toptrader_long_short_ratio",
     "sum_toptrader_long_short_ratio",
@@ -74,6 +76,8 @@ METRICS_RATIOS = (
 SCHEMAS = {
     "futures_klines_1m": pa.DataFrameSchema({**_ts("futures_klines_1m"), **_KLINE}, strict=True),
     "spot_klines_1m": pa.DataFrameSchema({**_ts("spot_klines_1m"), **_KLINE}, strict=True),
+    "mark_price_1m": pa.DataFrameSchema({**_ts("mark_price_1m"), **_KLINE}, strict=True),
+    "premium_index_1m": pa.DataFrameSchema({**_ts("premium_index_1m"), **_PREMIUM}, strict=True),
     "funding": pa.DataFrameSchema(
         {
             **_ts("funding"),

@@ -36,9 +36,10 @@ FEATURE_CONFIG = Path("config/features.yaml")
 MARKET_PATH = Path("data/features/market.parquet")
 CLEAN = Path("data/clean/binance")
 MIN, HOUR, DAY = 60_000, 3_600_000, 86_400_000  # milliseconds
-DATASETS = ("futures_klines_1m", "spot_klines_1m", "metrics", "funding")
+DATASETS = ("futures_klines_1m", "spot_klines_1m", "metrics", "funding", "mark_price_1m", "premium_index_1m")
 TS_COL = {"futures_klines_1m": "open_time", "spot_klines_1m": "open_time", "metrics": "create_time",
-          "funding": "calc_time"}  # fmt: skip
+          "funding": "calc_time",
+          "mark_price_1m": "open_time", "premium_index_1m": "open_time"}  # fmt: skip
 UTC_MS = pl.Datetime("ms", "UTC")
 
 
@@ -47,6 +48,7 @@ class FeatureConfig(BaseModel):
 
     staleness_minutes: dict[str, int]
     funding_z_min_settlements: int
+    premium_min_coverage: float  # Phase 6: share of a window's 1m premium-index bars required
     vol_z_min_hours: int
     volume_profile_bin_pct: float
     value_area: float
@@ -138,6 +140,14 @@ class Ctx:
     @cached_property
     def spot(self) -> Minutes:
         return Minutes(self.data["spot_klines_1m"])
+
+    @cached_property
+    def mark(self) -> Minutes:
+        return Minutes(self.data["mark_price_1m"])
+
+    @cached_property
+    def premium(self) -> Minutes:
+        return Minutes(self.data["premium_index_1m"])
 
     def price_at(self, at: np.ndarray) -> np.ndarray:
         """Futures last close by `at` (level, staleness-limited)."""
@@ -232,13 +242,13 @@ class Ctx:
 @dataclass(frozen=True)
 class Feature:
     name: str
-    group: str  # technical | derivatives | macd_ema (Phase 4)
+    group: str  # technical | derivatives | macd_ema (Phase 4) | mark_premium (Phase 6)
     inputs: tuple[str, ...]
     fn: Callable[[Ctx], np.ndarray]
 
 
 REGISTRY: dict[str, Feature] = {}
-FUT, SPOT, METRICS, FUNDING = DATASETS
+FUT, SPOT, METRICS, FUNDING, MARK, PREMIUM = DATASETS
 
 
 def register(name: str, group: str, inputs: tuple[str, ...]):
@@ -534,6 +544,47 @@ for _w in ("1h", "4h", "24h"):
     register(f"oi_price_quadrant_{_w}", "derivatives", (METRICS, FUT))(
         lambda ctx, n=WINDOWS[_w]: _oi_price_quadrant(ctx, n)
     )
+
+
+# --- mark_premium (Phase 6 Workstream A; SCOPE.md): mark price and premium index, 1m bars closed by t
+
+
+def _last_close(ctx: Ctx, m: Minutes) -> np.ndarray:
+    i, ok = m.last_index(ctx.grid, ctx.stale["price_1m"])
+    return nan_where(ok, m.c[i])
+
+
+def _premium_mean(ctx: Ctx, length: int, ends: np.ndarray) -> np.ndarray:
+    """Mean premium index (bps) of 1m bars opened in [t - length, t); NaN below premium_min_coverage."""
+    m = ctx.premium
+    p = Minutes.prefix(m.c)
+    lo, hi = m.bounds(ends, length)
+    n = (hi - lo).astype(np.float64)
+    return np.where(
+        n >= ctx.cfg.premium_min_coverage * length / MIN, safe_div(p[hi] - p[lo], n) * 1e4, np.nan
+    )
+
+
+register("basis_mark_bps", "mark_premium", (FUT, MARK))(
+    lambda ctx: safe_div(ctx.price - _last_close(ctx, ctx.mark), _last_close(ctx, ctx.mark)) * 1e4
+)
+register("premium_last_bps", "mark_premium", (PREMIUM,))(lambda ctx: _last_close(ctx, ctx.premium) * 1e4)
+register("premium_mean_1h_bps", "mark_premium", (PREMIUM,))(lambda ctx: _premium_mean(ctx, HOUR, ctx.grid))
+register("premium_mean_8h_bps", "mark_premium", (PREMIUM,))(
+    lambda ctx: _premium_mean(ctx, 8 * HOUR, ctx.grid)
+)
+
+
+@register("premium_z_7d", "mark_premium", (PREMIUM,))
+def premium_z_7d(ctx: Ctx) -> np.ndarray:
+    """1h mean premium, z-scored against the previous 168 hourly values (>= vol_z_min_hours present)."""
+    x = _premium_mean(ctx, HOUR, ctx.hours)
+    base = pl.DataFrame({"x": pl.Series(x).fill_nan(None)}).select(
+        m=pl.col("x").shift(1).rolling_mean(168, min_samples=ctx.cfg.vol_z_min_hours),
+        sd=pl.col("x").shift(1).rolling_std(168, min_samples=ctx.cfg.vol_z_min_hours),
+    )
+    m, sd = (base[c].fill_null(np.nan).to_numpy() for c in ("m", "sd"))
+    return ctx.on_grid(safe_div(x - m, sd))
 
 
 # --- macd_ema (Phase 4 rung 4a; SCOPE.md): MACD(12, 26, 9) and EMA distances on 1h closes, in ATR units

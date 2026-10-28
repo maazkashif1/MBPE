@@ -90,6 +90,21 @@ DATASETS = {
             "sum_taker_long_short_vol_ratio": pl.Float64,
         },
     ),
+    # Phase 6: 1m mark-price and premium-index klines (volume columns are zero; premium can be negative)
+    "mark_price_1m": Dataset(
+        "futures/um/daily/markPriceKlines/BTCUSDT/1m/BTCUSDT-1m-{p}.zip",
+        False,
+        "open_time",
+        timedelta(minutes=1),
+        KLINE_COLUMNS,
+    ),
+    "premium_index_1m": Dataset(
+        "futures/um/daily/premiumIndexKlines/BTCUSDT/1m/BTCUSDT-1m-{p}.zip",
+        False,
+        "open_time",
+        timedelta(minutes=1),
+        KLINE_COLUMNS,
+    ),
     # order book depth snapshots (~every 30 s): 12 rows per snapshot, one per band (+-0.2, 1..5 % from mid);
     # pivoted to one row per snapshot in the clean layer
     "book_depth": Dataset(

@@ -418,3 +418,24 @@ All new streams follow the existing rules: available-at timestamps, staleness li
 - confirmation of where the collectors run (this machine or a VM).
 
 The RSS and liquidation collectors need no credentials.
+
+### Phase 6 Workstream A: feature definitions (fixed 2026-10-28, before any Phase 6 model)
+All features below use only data with timestamps before the decision time t, keep the existing staleness and NaN rules, and are covered by the truncation leakage tests.
+
+**`mark_premium` group** (market registry; Binance archive `markPriceKlines` / `premiumIndexKlines`, 1m, from 2020-09):
+- `basis_mark_bps`: (futures last close − mark-price last close) / mark × 10⁴. Both are the last 1m bars closed by t, within the 5-min price staleness limit.
+- `premium_last_bps`: premium index of the last 1m bar closed by t × 10⁴ (5-min staleness).
+- `premium_mean_1h_bps`, `premium_mean_8h_bps`: mean premium index (× 10⁴) of the 1m bars opened in [t − W, t). NaN unless ≥ 80% of the window's minutes are present (`premium_min_coverage` in `config/features.yaml`).
+- `premium_z_7d`: `premium_mean_1h_bps` z-scored against its previous 168 hourly values (≥ 135 present, the `vol_z_7d` rule).
+
+**`regulatory` group** (news registry; GDELT titles of crypto-group rows, the same availability and coverage gating as the news features, each near-duplicate cluster counted once at its first copy):
+- `reg_new_clusters_{1h,4h,24h}`: new clusters whose first title matches the regulatory pattern.
+- `major_new_clusters_{4h,24h}`: new clusters whose first title matches the major-announcement pattern.
+- `reg_share_24h`: regulatory new clusters ÷ all crypto new clusters, 24 h.
+- **Regulatory pattern** (word boundaries; the acronyms are case-sensitive, everything else case-insensitive): SEC, CFTC, ETF(s); regulator(s), regulatory, regulation(s), regulate(d/s), lawsuit(s), sue(s/d), indict(ed/ment), fined, ban(s/ned), crackdown, enforcement, legislation, lawmakers, congress, senate, approv(al/e/es/ed), sanction(s/ed), licence/license(s/d), subpoena(s).
+- **Major-announcement pattern** (case-insensitive): hack(s/ed), exploit(s/ed), breach(ed), stolen, halving, bankrupt(cy), insolvency/insolvent, delist(s/ed/ing), collapse(s/d), outage(s), depeg(s/ged).
+- **Limitation:** keyword matching on titles is crude: false positives and misses are expected, and it's tested on fixed examples only. It only sees headlines already matched by the GDELT crypto keyword list.
+
+**Forward-only collectors** (no features yet; their features are pre-registered with the second model, after 6 months of data):
+- `mbpe/sources/rss_live.py`: CoinDesk, Cointelegraph, The Block, Decrypt and Bitcoin Magazine headlines, every 15 min. Availability = first fetch.
+- `mbpe/sources/liquidations_live.py`: the BTCUSDT `forceOrder` WebSocket on the `/market/` stream path. Coverage counts only while data is flowing; the legacy `/ws/` path connects but delivers nothing (checked 2026-10-28).
