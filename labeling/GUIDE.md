@@ -1,6 +1,8 @@
 # Headline labeling guide
 
-Fill the `label` column of `sample.csv` with **positive**, **negative** or **neutral**.
+Label each headline in `sample.csv` **positive**, **negative** or **neutral** with the labeling tool (`uv run python -m mbpe.labeling.label`), which saves to `labels.csv`.
+
+Headlines listed in `excluded.csv` are skipped and left out of the model comparison (see that file for why).
 
 ## What you're labeling
 The **tone of the headline as financial news**: is it reporting something good, bad or neither for the subject it's about?
@@ -14,6 +16,11 @@ The **tone of the headline as financial news**: is it reporting something good, 
 - **Questions, explainers, how-tos, listings, price tickers without direction, and announcements without a judgment** are neutral.
 - **Price moves:** rises, records and inflows are positive; falls, crashes and outflows are negative. A plain level with no direction ("Bitcoin trades at $67,000") is neutral.
 - **Unsure after ~10 seconds:** choose neutral. Speed and consistency matter more than precision on borderline cases.
+
+## Checklist for unclear headlines
+1. **Does the headline report a clear outcome?** A court ruling, a win or loss, money gained or lost, a price move. A description with no event ("X is shaping Y") has no outcome to judge.
+2. **Is the tone coming from facts or from wording?** Upbeat or alarming adjectives ("unprecedented", "massive", "shocking") are framing, not news. Opinion and promotional pieces often read this way. Judge the news, not the framing.
+3. **Still unsure after 1 and 2?** Use the tie-breaker: neutral.
 
 ## Examples (invented; not from the sample)
 

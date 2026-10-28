@@ -1088,3 +1088,74 @@ Per fold, model net bps per trade minus the baseline median (random / vol filter
 | 15 | +10.3 / +8.7 | +8.9 / -14.9 | -1.0 / -2.5 | +5.4 / +17.8 | -4.5 / -7.9 | -9.6 / -4.7 |
 | 16 | +13.7 / +9.3 | +10.6 / +13.0 | +7.1 / +3.8 | -2.1 / -0.7 | -1.9 / -4.5 | -6.2 / -5.0 |
 | 17 | -5.2 / -6.1 | +5.1 / +100.6 | -8.7 / -8.6 | -1.1 / +2.9 | -7.9 / -1.9 | -8.7 / +84.2 |
+
+## Phase 3 step 2b: CryptoBERT rung 3 (secondary) and LLM-label sanity check (2026-10-28)
+
+**Pre-registered in SCOPE.md before any of this ran ("Sentiment scorer decision"):**
+- FinBERT is the primary scorer for all headline results.
+- CryptoBERT is reported only and can't replace FinBERT.
+- Hand labeling is optional and no longer decides the scorer.
+- The benchmark is the 198 headlines not in `labeling/excluded.csv`.
+
+### Rung 3 with CryptoBERT news features, next to FinBERT
+- **Procedure:** identical to step 2. Only `news_features` differs (`data/features/news_cryptobert.parquet`).
+- **Configurations:** untuned LightGBM for A and B × both cost scenarios; tuned LightGBM for A/taker.
+- **Re-tuning:** the tuned model was re-tuned on CryptoBERT features with the same procedure (30 Optuna trials × 18 folds = **540 trials**). **The overall trial count is now 2,160** (1,620 FinBERT + 540 CryptoBERT) for the overfitting estimate.
+- **Validation-to-test shrinkage again:** the best CryptoBERT trial per fold averaged +0.031 R on validation (positive in 12 of 18 folds), against a median trial of −0.07.
+- **Runs:** `uv run python -m mbpe.validation.cryptobert_compare {tune,evaluate}`; outputs in `reports/phase3_step2_cryptobert/`.
+
+| label set | scenario | model | scorer | trades | mean net R [95% CI] | net bps | gross bps | random: net R (median) | vol filter: net R (median) | folds won vs random | vs vol filter |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A | taker | lgbm r3 | finbert | 3,946 | -0.127 [-0.158, -0.096] | -9.2 | +4.7 | -0.225 | -0.160 | 16/18 | 12/18 |
+| A | taker | lgbm r3 | cryptobert | 4,916 | -0.151 [-0.180, -0.121] | -10.6 | +3.3 | -0.225 | -0.179 | 16/18 | 11/18 |
+| A | maker_entry_tp | lgbm r3 | finbert | 3,946 | -0.055 [-0.086, -0.024] | -3.5 | +4.7 | -0.137 | -0.102 | 16/18 | 15/18 |
+| A | maker_entry_tp | lgbm r3 | cryptobert | 5,021 | -0.077 [-0.107, -0.047] | -5.2 | +3.1 | -0.134 | -0.116 | 16/18 | 12/18 |
+| B | taker | lgbm r3 | finbert | 3,793 | -0.077 [-0.097, -0.056] | -11.3 | +2.6 | -0.092 | -0.078 | 11/18 | 11/18 |
+| B | taker | lgbm r3 | cryptobert | 4,184 | -0.093 [-0.113, -0.073] | -14.1 | -0.1 | -0.099 | -0.086 | 9/18 | 9/18 |
+| B | maker_entry_tp | lgbm r3 | finbert | 4,220 | -0.051 [-0.071, -0.032] | -7.1 | +1.8 | -0.060 | -0.057 | 11/18 | 12/18 |
+| B | maker_entry_tp | lgbm r3 | cryptobert | 4,211 | -0.060 [-0.080, -0.040] | -9.0 | -0.2 | -0.063 | -0.058 | 10/18 | 9/18 |
+| A | taker | lgbm_tuned r3 | finbert | 2,760 | -0.122 [-0.160, -0.085] | -8.8 | +5.1 | -0.211 | -0.137 | 15/18 | 10/18 |
+| A | taker | lgbm_tuned r3 | cryptobert | 2,698 | -0.140 [-0.178, -0.099] | -11.1 | +2.8 | -0.233 | -0.145 | 14/18 | 10/18 |
+
+- **CryptoBERT is worse than FinBERT in every configuration,** with lower mean net R and lower gross bps. The confidence intervals overlap, so the gap isn't significant.
+- **In label set B, CryptoBERT's gross edge is gone:** −0.1 / −0.2 gross bps.
+- **Neither scorer makes rung 3 profitable,** and neither makes news beat rungs 1–2 (see step 2).
+- **FinBERT stays primary,** by pre-registration and independently of these numbers.
+
+### LLM-label sanity check (NOT human labels)
+- **What it is:** the 198 benchmark headlines were labeled for tone by an LLM (Claude Opus 5.5, the assistant in this session) following `labeling/GUIDE.md` and its checklist. They're stored separately in `data/labeling/llm_labels.csv` (git-ignored, marked "LLM … NOT human"), away from the human `labeling/labels.csv`, and used only for this sanity check.
+- **Label distribution:** 92 neutral, 67 negative, 39 positive.
+- **Scorer label:** the argmax of each scorer's class probabilities on the sample titles.
+- **Command:** `uv run python -m mbpe.labeling.agreement [LABELS_CSV]`. It also works on the human labels once they're done.
+
+Labels: LLM-judged (data/labeling/llm_labels.csv), 198 benchmark headlines.
+
+| scorer | n | accuracy | Cohen's kappa | macro-F1 | Spearman(score, label) |
+|---|---|---|---|---|---|
+| finbert | 198 | 59.6% | 0.352 | 0.558 | 0.368 |
+| cryptobert | 198 | 38.9% | -0.012 | 0.321 | 0.237 |
+
+Confusion matrix, finbert (rows: labels; columns: scorer argmax):
+
+| label \ scorer | negative | neutral | positive |
+|---|---|---|---|
+| negative | 36 | 21 | 10 |
+| neutral | 13 | 66 | 13 |
+| positive | 7 | 16 | 16 |
+
+Confusion matrix, cryptobert (rows: labels; columns: scorer argmax):
+
+| label \ scorer | negative | neutral | positive |
+|---|---|---|---|
+| negative | 9 | 49 | 9 |
+| neutral | 13 | 58 | 21 |
+| positive | 1 | 28 | 10 |
+
+
+- **FinBERT agrees moderately with the LLM labels:** κ 0.35, 60% accuracy. Most disagreements are between negative and neutral.
+- **CryptoBERT agrees no better than chance:** κ −0.01. It labels 49 of the 67 LLM-negative headlines neutral.
+- **This is consistent with its training** (bullish/bearish social posts, not news tone) and with its +0.28 average crypto sentiment.
+- **It's a sanity check only.** An LLM judge isn't ground truth, and nothing was decided from it.
+
+### Tests
+- `tests/test_labeling.py` now has 6 tests, including Cohen's κ and macro-F1 on a hand-checked example.

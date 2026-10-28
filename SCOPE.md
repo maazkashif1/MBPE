@@ -101,8 +101,9 @@ Registered before any modeling. **No further label or cost variants will be adde
 
 ## Sentiment scoring (Phase 2, decided 2026-10-27)
 - **No LLM scorers.** An LLM trained on later data may "know" how a historical headline played out (historical contamination). This replaces the earlier "FinBERT vs CryptoBERT / small local LLM" comparison.
-- **Scorers:** ProsusAI/finbert (default) vs one crypto-specific BERT, compared on the hand-labeled sample.
+- **Scorers:** ProsusAI/finbert (**primary**) and ElKulako/cryptobert (secondary, reported only); see "Sentiment scorer decision" below.
 - **Label definition:** labels are financial-news tone (positive / negative / neutral), not the expected BTC price impact (`labeling/GUIDE.md`).
+- **Benchmark set:** the 200-headline sample minus the ids in `labeling/excluded.csv`. h001 and h002 are excluded because they were discussed with an LLM before labeling. The model comparison runs on the remaining **198**. Labels given to excluded headlines stay in `labels.csv` but are never scored.
 - **Sentiment is scored per exact-unique normalized title** (decoded, lowercased, outlet suffix stripped), not per cluster. Scores map back to every row with that title.
 - **Near-duplicate clusters are used only for counting and novelty features.** A cluster takes no new members more than 24 h after its first member, so later developments start a new cluster. A cluster becomes available at its earliest member's batch time + 15 min; later copies add volume only.
 
@@ -159,3 +160,9 @@ Registered before any modeling. **No further label or cost variants will be adde
   - **Space:** num_leaves 7–63, min_data_in_leaf 100–1000, learning_rate 0.01–0.1 (log), feature_fraction 0.5–0.9, lambda_l2 0–10. Other settings as in step 1.
   - **Total trials:** 30 × 18 folds × 3 rungs = **1,620**, recorded for the overfitting (deflated Sharpe / PBO) estimate.
   - **Evaluation:** the best trial's parameters per fold and rung are refit and evaluated on the test fold exactly as in step 1 (calibration, threshold, simulator, baselines).
+
+## Sentiment scorer decision (pre-registered 2026-10-28, before any CryptoBERT model results)
+- **FinBERT is the primary sentiment scorer for all headline results.**
+- **CryptoBERT is a secondary, reported-only comparison.** It cannot replace FinBERT based on its results (backtest, agreement or otherwise).
+- **Hand labeling is optional and no longer decides the scorer.** This supersedes the earlier plan to choose the scorer by agreement with the hand labels.
+- **Optional sanity check:** an LLM labels the 198 benchmark headlines for tone following `labeling/GUIDE.md`. These labels are **LLM-judged, not human**, kept separate from `labels.csv`, and used only to report each scorer's agreement as a sanity check. They decide nothing.
