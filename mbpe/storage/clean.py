@@ -97,6 +97,51 @@ SCHEMAS = {
 }
 
 
+BOOK_BANDS = (0.2, 1.0, 2.0, 3.0, 4.0, 5.0)  # % from mid; bid side = negative percentage in the raw files
+BOOK_DEPTH_MIN_BYTES = 2048  # smaller raw files count as missing days (SCOPE.md, Phase 4)
+
+
+def book_col(kind: str, side: str, band: float) -> str:
+    """e.g. book_col("depth", "bid", 0.2) -> "bid_depth_20bp" (cumulative depth from mid to the band)."""
+    return f"{side}_{kind}_{round(band * 100)}bp"
+
+
+BOOK_COLUMNS = [book_col(k, s, b) for k in ("depth", "notional") for s in ("bid", "ask") for b in BOOK_BANDS]
+SCHEMAS["book_depth"] = pa.DataFrameSchema(
+    {**_ts("book_depth"), **{c: pa.Column(pl.Float64, _nonneg, nullable=True) for c in BOOK_COLUMNS}},
+    strict=True,
+)
+
+
+def book_depth_wide(long: pl.DataFrame) -> pl.DataFrame:
+    """12 rows per snapshot -> one row per snapshot; a band absent from a snapshot stays null.
+
+    Exact duplicate rows are dropped; two different values for the same (timestamp, band) raise.
+    """
+    long = long.unique(maintain_order=True)
+    dup = long.filter(pl.struct("timestamp", "percentage").is_duplicated())
+    if dup.height:
+        raise ConflictingDuplicatesError(f"{dup.height} conflicting book_depth rows, e.g.\n{dup.head(6)}")
+    unknown = set(long["percentage"].abs().unique().to_list()) - set(BOOK_BANDS)
+    if unknown:
+        raise ValueError(f"unexpected book_depth bands: {sorted(unknown)}")
+    named = long.with_columns(
+        side=pl.when(pl.col("percentage") < 0).then(pl.lit("bid")).otherwise(pl.lit("ask")),
+        band=(pl.col("percentage").abs() * 100).round().cast(pl.Int64),
+    )
+    wide = named.pivot(on=["side", "band"], index="timestamp", values=["depth", "notional"], separator="|")
+    rename = {}
+    for c in wide.columns[1:]:  # e.g. 'depth|{"bid",20}' (polars names multi-key pivot columns this way)
+        kind, key = c.split("|", 1)
+        side, band = key.strip("{}").replace('"', "").split(",")
+        rename[c] = f"{side}_{kind}_{band}bp"
+    wide = wide.rename(rename)
+    for c in BOOK_COLUMNS:
+        if c not in wide.columns:
+            wide = wide.with_columns(pl.lit(None, pl.Float64).alias(c))
+    return wide.select("timestamp", *BOOK_COLUMNS).sort("timestamp")
+
+
 def validate(name: str, df: pl.DataFrame) -> pl.DataFrame:
     return SCHEMAS[name].validate(df, lazy=True)  # lazy: report every failure, not just the first
 
@@ -145,11 +190,15 @@ def build_clean(
 ) -> pl.DataFrame:
     """Rebuild the clean Parquet for `name` from all stored raw files (funding: + REST fallback months)."""
     files = raw_files(name, raw_root)
+    if name == "book_depth":  # near-empty files are missing days (SCOPE.md, Phase 4)
+        files = [f for f in files if f.stat().st_size >= BOOK_DEPTH_MIN_BYTES]
     if not files:
         raise FileNotFoundError(f"no raw files for {name} under {raw_root}")
     df = pl.concat([read_raw(name, f) for f in files])
     if name == "funding":
         df = merge_funding_rest(df, sorted(rest_root.glob("*.json")))
+    if name == "book_depth":
+        df = book_depth_wide(df)
     df = validate(name, dedupe(df, DATASETS[name].ts_col))
     out = clean_path(name, clean_root)
     out.parent.mkdir(parents=True, exist_ok=True)

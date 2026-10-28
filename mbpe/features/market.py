@@ -232,7 +232,7 @@ class Ctx:
 @dataclass(frozen=True)
 class Feature:
     name: str
-    group: str  # technical | derivatives
+    group: str  # technical | derivatives | macd_ema (Phase 4)
     inputs: tuple[str, ...]
     fn: Callable[[Ctx], np.ndarray]
 
@@ -534,6 +534,36 @@ for _w in ("1h", "4h", "24h"):
     register(f"oi_price_quadrant_{_w}", "derivatives", (METRICS, FUT))(
         lambda ctx, n=WINDOWS[_w]: _oi_price_quadrant(ctx, n)
     )
+
+
+# --- macd_ema (Phase 4 rung 4a; SCOPE.md): MACD(12, 26, 9) and EMA distances on 1h closes, in ATR units
+
+
+def _ema(x: pl.Expr, n: int) -> pl.Expr:
+    return x.ewm_mean(alpha=2 / (n + 1), adjust=False)  # recursive from the first bar present
+
+
+def _macd_ema(ctx: Ctx) -> pl.DataFrame:
+    """MACD line/signal/histogram and close - EMA_n on the 1h bars present, at the decision times."""
+    if "macd_ema" not in ctx.memo:
+        c = pl.col("close")
+        b = ctx.bars.filter(c.is_not_null()).with_columns(line=_ema(c, 12) - _ema(c, 26))
+        b = b.with_columns(signal=_ema(pl.col("line"), 9)).with_columns(
+            hist=pl.col("line") - pl.col("signal")
+        )
+        b = b.with_columns(*[(c - _ema(c, n)).alias(f"d{n}") for n in (20, 50, 200)])
+        ctx.memo["macd_ema"] = pl.DataFrame({"t": ctx.grid}).join(b, on="t", how="left")
+    return ctx.memo["macd_ema"]
+
+
+def _per_atr(ctx: Ctx, col: str) -> np.ndarray:
+    return safe_div(_macd_ema(ctx)[col].fill_null(np.nan).to_numpy(), ctx.atr1h)
+
+
+for _c in ("line", "signal", "hist"):
+    register(f"macd_{_c}_atr", "macd_ema", (FUT,))(lambda ctx, c=_c: _per_atr(ctx, c))
+for _n in (20, 50, 200):
+    register(f"ema{_n}_dist_atr", "macd_ema", (FUT,))(lambda ctx, n=_n: _per_atr(ctx, f"d{n}"))
 
 
 # ---------- build ----------

@@ -1,6 +1,6 @@
 """Download Binance raw files and rebuild the clean layer.
 
-Usage: uv run python -m mbpe.ingest [START [END]]   (default 2020-09-01 .. today, UTC dates)
+Usage: uv run python -m mbpe.ingest [START [END]] [--only NAME]   (default 2020-09-01 .. today, UTC dates)
 """
 
 import sys
@@ -14,10 +14,13 @@ from mbpe.storage.clean import build_clean, gap_report, null_runs
 
 
 def main() -> None:
-    start = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else date(2020, 9, 1)
-    end = date.fromisoformat(sys.argv[2]) if len(sys.argv) > 2 else datetime.now(UTC).date()
+    args = sys.argv[1:]
+    only = [args.pop(args.index("--only") + 1)] if "--only" in args else list(DATASETS)
+    args = [a for a in args if a != "--only"]
+    start = date.fromisoformat(args[0]) if args else date(2020, 9, 1)
+    end = date.fromisoformat(args[1]) if len(args) > 1 else datetime.now(UTC).date()
     t_all = time.perf_counter()
-    for name in DATASETS:
+    for name in only:
         t0 = time.perf_counter()
         files = fetch_history(name, start, end)
         if name == "funding":  # archive months not published yet come from the REST API

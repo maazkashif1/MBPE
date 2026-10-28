@@ -27,6 +27,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from mbpe.features.market import MARKET_PATH, REGISTRY
 from mbpe.features.news import NEWS_REGISTRY, load_calendar
+from mbpe.features.phase4 import PHASE4_REGISTRY
 from mbpe.labels.triple_barrier import load_config, scenario_net_r
 from mbpe.validation.backtest import blackout, metrics, simulate
 from mbpe.validation.walk_forward import (
@@ -46,15 +47,22 @@ RUNGS = {
     2: ("technical", "derivatives"),
     3: ("technical", "derivatives", "news", "calendar"),
 }
+# Phase 4 rungs (SCOPE.md): rung 3 + one extension each; not in RUNGS, so Phase 3 defaults are unchanged
+PHASE4_RUNGS = {
+    41: (*RUNGS[3], "macd_ema"),  # 4a
+    42: (*RUNGS[3], "nfp"),  # 4b (+ NFP blackout, set in the config)
+    43: (*RUNGS[3], "orderbook"),  # 4c
+}
+ALL_RUNGS = {**RUNGS, **PHASE4_RUNGS}
 MODELS = ("logreg", "lgbm")
 SIDES = ("long", "short")
 REPORT_DIR = Path("reports/phase3_step1")
 TRACKING_URI = "sqlite:///mlruns/mlflow.db"
-GROUP = {n: f.group for n, f in {**REGISTRY, **NEWS_REGISTRY}.items()}
+GROUP = {n: f.group for n, f in {**REGISTRY, **NEWS_REGISTRY, **PHASE4_REGISTRY}.items()}
 
 
 def rung_features(rung: int) -> list[str]:
-    return [n for n, g in GROUP.items() if g in RUNGS[rung]]
+    return [n for n, g in GROUP.items() if g in ALL_RUNGS[rung]]
 
 
 def is_categorical(name: str) -> bool:
@@ -88,6 +96,8 @@ def load_dataset(
     feats = pl.read_parquet(MARKET_PATH).join(
         pl.read_parquet(news_path or cfg.news_features), on="decision_time"
     )
+    if cfg.phase4_features is not None:
+        feats = feats.join(pl.read_parquet(cfg.phase4_features), on="decision_time", how="left")
     df = (
         wide.join(feats, on="decision_time")
         .filter(pl.col("decision_time") >= cfg.eval_start)
@@ -239,7 +249,7 @@ def prepare_arrays(df: pl.DataFrame, cfg: EvalConfig):
     decision = df["decision_time"].dt.epoch("ms").to_numpy()
     arr = {s: side_arrays(df, s) for s in SIDES}
     weights = {s: uniqueness(decision, arr[s]["exit"]) for s in SIDES}
-    events = load_calendar()
+    events = load_calendar(events=cfg.blackout_events)
     eligible = ~blackout(
         decision, events, cfg.blackout_before_minutes, cfg.blackout_horizon_minutes, cfg.latency_minutes
     )

@@ -77,11 +77,9 @@ def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | N
     )
 
 
-def load_calendar(path: Path = CALENDAR_PATH) -> np.ndarray:
-    """Sorted UTC epoch-ms times of CPI releases and FOMC statements (released or scheduled)."""
-    ev = pl.read_csv(path).filter(
-        pl.col("event").is_in(["CPI", "FOMC"]) & (pl.col("release_utc").is_not_null())
-    )
+def load_calendar(path: Path = CALENDAR_PATH, events: tuple[str, ...] = ("CPI", "FOMC")) -> np.ndarray:
+    """Sorted UTC epoch-ms times of the given events (released or scheduled); default CPI + FOMC (Phase 3)."""
+    ev = pl.read_csv(path).filter(pl.col("event").is_in(list(events)) & (pl.col("release_utc").is_not_null()))
     t = ev.select(pl.col("release_utc").str.strptime(UTC_MS, "%Y-%m-%d %H:%M").dt.epoch("ms"))["release_utc"]
     return np.sort(t.to_numpy())
 

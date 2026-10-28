@@ -46,6 +46,8 @@ class EvalConfig(BaseModel):
     lgbm_early_stopping: int
     logreg_C: float
     news_features: Path = Path("data/features/news.parquet")  # which news config the harness evaluates
+    phase4_features: Path | None = None  # Phase 4: NFP / order-book features joined when set
+    blackout_events: tuple[str, ...] = ("CPI", "FOMC")  # Phase 4 rung 4b adds "NFP"
 
 
 def load_eval_config(path: Path = EVAL_CONFIG) -> EvalConfig:

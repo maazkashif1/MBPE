@@ -90,6 +90,15 @@ DATASETS = {
             "sum_taker_long_short_vol_ratio": pl.Float64,
         },
     ),
+    # order book depth snapshots (~every 30 s): 12 rows per snapshot, one per band (+-0.2, 1..5 % from mid);
+    # pivoted to one row per snapshot in the clean layer
+    "book_depth": Dataset(
+        "futures/um/daily/bookDepth/BTCUSDT/BTCUSDT-bookDepth-{p}.zip",
+        False,
+        "timestamp",
+        timedelta(seconds=30),
+        {"timestamp": pl.String, "percentage": pl.Float64, "depth": pl.Float64, "notional": pl.Float64},
+    ),
 }
 DROP_COLUMNS = ["ignore", "symbol"]  # constant / unused
 
@@ -253,11 +262,9 @@ def parse_csv(name: str, data: bytes) -> pl.DataFrame:
         df = pl.DataFrame(schema=ds.columns)
     else:
         df = pl.read_csv(io.BytesIO(data), has_header=False, schema=ds.columns)
-    if name == "metrics":
+    if ds.columns[ds.ts_col] == pl.String:  # metrics, book_depth: "YYYY-mm-dd HH:MM:SS" (UTC)
         df = df.with_columns(
-            pl.col("create_time")
-            .str.strptime(pl.Datetime("ms"), "%Y-%m-%d %H:%M:%S")
-            .dt.replace_time_zone("UTC")
+            pl.col(ds.ts_col).str.strptime(pl.Datetime("ms"), "%Y-%m-%d %H:%M:%S").dt.replace_time_zone("UTC")
         )
     else:
         times = [c for c in ("open_time", "close_time", "calc_time") if c in df.columns]

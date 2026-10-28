@@ -107,7 +107,7 @@ def assert_no_leakage(data: dict[str, pl.DataFrame], times: np.ndarray) -> None:
 
 def test_every_feature_has_metadata():
     for f in REGISTRY.values():
-        assert f.group in {"technical", "derivatives"}, f.name
+        assert f.group in {"technical", "derivatives", "macd_ema"}, f.name
         assert set(f.inputs) <= set(DATASETS), f.name
 
 
