@@ -560,6 +560,122 @@ def check_gdelt_bulk() -> list[str]:
     return out
 
 
+# ---------- Phase 4: order book ----------
+
+OB_PREFIX = "data/futures/um/{freq}/{name}/BTCUSDT/"
+
+
+def s3_objects(prefix: str) -> list[tuple[str, int]]:
+    """(file name, size bytes) of every object under prefix (paginated S3 listing; no data downloaded)."""
+    out, marker = [], ""
+    while True:
+        q = {"delimiter": "/", "prefix": prefix, "max-keys": 1000, **({"marker": marker} if marker else {})}
+        xml = get(f"{S3_LIST}?{urllib.parse.urlencode(q)}").decode()
+        for key, size in re.findall(r"<Key>([^<]*)</Key>.*?<Size>(\d+)</Size>", xml, re.S):
+            out.append((key.rsplit("/", 1)[-1], int(size)))
+        m = re.search(r"<NextMarker>([^<]*)</NextMarker>", xml)
+        if "<IsTruncated>true</IsTruncated>" not in xml or not m:
+            return out
+        marker = m.group(1)
+
+
+def period_of(fname: str) -> str:
+    return re.search(r"(\d{4}-\d{2}(?:-\d{2})?)\.zip$", fname).group(1)
+
+
+def describe_file(name: str, fname: str, blob: bytes) -> list[str]:
+    rows = unzip_csv(blob)
+    header, body = rows[0], rows[1:]
+    tcol = next(i for i, c in enumerate(header) if "time" in c)
+    ts = [epoch_to_dt(r[tcol]) if r[tcol].isdigit()  # bookDepth: 'YYYY-mm-dd HH:MM:SS' (UTC)
+          else datetime.fromisoformat(r[tcol]).replace(tzinfo=UTC) for r in body]
+    uniq = sorted(set(ts))
+    gaps = Counter((b - a).total_seconds() for a, b in zip(uniq, uniq[1:]))
+    lines = [
+        f"### {name}: `{fname}` (downloaded; {len(blob) / 1e6:.1f} MB zipped)",
+        "",
+        f"- Columns: `{', '.join(header)}`",
+        f"- Rows: {len(body):,}; unique `{header[tcol]}` values: {len(uniq):,}; "
+        f"range {uniq[0]:%Y-%m-%d %H:%M:%S} → {uniq[-1]:%Y-%m-%d %H:%M:%S} UTC",
+        "- Spacing between unique timestamps (seconds: count, top 5): "
+        + ", ".join(f"{k:g}: {v:,}" for k, v in gaps.most_common(5))
+        + f"; max gap {max(gaps):g} s",
+        f"- First rows: `{body[0]}`, `{body[1]}`",
+    ]
+    if name == "bookDepth":
+        pct = Counter(r[header.index("percentage")] for r in body)
+        per_snap = Counter(Counter(r[tcol] for r in body).values())
+        lines += [
+            "- Percentage bands (rows each): " + ", ".join(f"{k}: {v:,}" for k, v in
+                                                       sorted(pct.items(), key=lambda kv: float(kv[0]))),
+            "- Rows per snapshot (rows: snapshots): " + ", ".join(f"{k}: {v:,}" for k, v in per_snap.most_common()),
+        ]
+    return lines
+
+
+def check_orderbook() -> list[str]:
+    today = date.today()
+    out = [
+        f"## Phase 4: order book feasibility, BTCUSDT USD-M ({today})",
+        "",
+        "Source: `data.binance.vision`, from the public S3 listing (file names and sizes; no data downloaded) "
+        "plus **one** recent daily file per dataset. The missing-day scan uses the listing only: presence of "
+        "each `.zip` and its `.CHECKSUM`, not row contents (that would mean downloading everything).",
+        "",
+        "| dataset | files | first | last | missing in range | pending (last 3 days) | total size | "
+        "median file | smallest file |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    detail = []
+    for name, freq in (("bookDepth", "daily"), ("bookTicker", "daily"), ("bookTicker", "monthly")):
+        listing = s3_objects(OB_PREFIX.format(freq=freq, name=name))
+        objs = sorted(o for o in listing if o[0].endswith(".zip"))
+        sums = {f.removesuffix(".CHECKSUM") for f, _ in listing if f.endswith(".zip.CHECKSUM")}
+        if not objs:
+            out.append(f"| {name} {freq} | 0 | – | – | – | – | – | – | – |")
+            continue
+        periods = [period_of(f) for f, _ in objs]
+        sizes = sorted(s for _, s in objs)
+        first, last = periods[0], periods[-1]
+        if freq == "daily":
+            d0 = date.fromisoformat(first)
+            expected = [(d0 + timedelta(n)).isoformat() for n in range((today - d0).days + 1)]
+        else:
+            expected = sorted({d.strftime("%Y-%m") for d in (date.fromisoformat(first + "-01") + timedelta(n)
+                               for n in range((today - date.fromisoformat(first + "-01")).days + 1))})
+        have = set(periods)
+        absent = [p for p in expected if p not in have]
+        pending = [p for p in absent if is_pending(p, today)]
+        after = [p for p in absent if p > last and p not in pending]  # stopped publishing, not gaps
+        missing = [p for p in absent if p not in pending and p not in after]
+        small = min(objs, key=lambda o: o[1])
+        median = sizes[len(sizes) // 2]
+        tiny = [(period_of(f), sz) for f, sz in objs if sz < 0.1 * median]
+        no_sum = [period_of(f) for f, _ in objs if f not in sums]
+        out.append(
+            f"| {name} {freq} | {len(objs):,} | {first} | {last} | {len(missing)} "
+            f"| {len(pending) if not after else f'– (none after {last})'} "
+            f"| {sum(sizes) / 1e9:.2f} GB | {sizes[len(sizes) // 2] / 1e6:.1f} MB "
+            f"| {small[1] / 1e6:.2f} MB ({period_of(small[0])}) |"
+        )
+        miss_txt = ", ".join(ranges(missing) if freq == "daily" else missing) if missing else "none"
+        detail += [
+            f"### {name} {freq}: missing / pending", "",
+            f"- Missing between first and last file: {miss_txt}",
+            f"- Pending: {', '.join(pending) or 'none'}" if not after else
+            f"- **No files after {last}** ({len(after) + len(pending)} {'days' if freq == 'daily' else 'months'} "
+            "to today): the dataset is no longer published, not a gap.",
+            "- Files under 10% of the median size: "
+            + (", ".join(f"{p} ({sz:,} bytes)" for p, sz in tiny) or "none"),
+            f"- Files without a `.CHECKSUM`: {', '.join(no_sum) or 'none'}", "",
+        ]
+        if freq == "daily":
+            fname = objs[-1][0]
+            blob = get(f"{VISION}/futures/um/daily/{name}/BTCUSDT/{fname}")
+            detail += describe_file(name, fname, blob) + [""]
+    return out + [""] + detail
+
+
 CHECKS = {
     "history_depth": check_history_depth,
     "binance_day": lambda: check_binance_day(str(date.today() - timedelta(days=3))),
@@ -568,6 +684,7 @@ CHECKS = {
     "gdelt_volume": check_gdelt_volume,
     "gdelt_buckets": check_gdelt_buckets,
     "gdelt_bulk": check_gdelt_bulk,
+    "orderbook": check_orderbook,
 }
 
 

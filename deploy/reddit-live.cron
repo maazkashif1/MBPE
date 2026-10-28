@@ -1,0 +1,6 @@
+# Reddit live collector (r/Bitcoin, r/CryptoCurrency): every 15 minutes. NOT installed yet: enable only after the
+# Reddit app credentials are confirmed. Credentials live outside the repo, e.g. in ~/.config/mbpe/reddit.env
+# (chmod 600) containing REDDIT_CLIENT_ID=..., REDDIT_CLIENT_SECRET=..., REDDIT_USER_AGENT=...
+# Install with `crontab -e`; adjust MBPE_DIR and the uv path (`which uv`).
+MBPE_DIR=/path/to/MBPE
+5,20,35,50 * * * * cd "$MBPE_DIR" && set -a && . "$HOME/.config/mbpe/reddit.env" && set +a && /opt/homebrew/bin/uv run python -m mbpe.sources.reddit_live >> data/logs/reddit_live.log 2>&1

@@ -248,3 +248,13 @@ def test_harness_catches_a_leaky_news_feature():
             )
     finally:
         del NEWS_REGISTRY["leaky_next_hour_count"]
+
+
+def test_phase3_calendar_ignores_other_events():
+    # macro_events.csv also lists NFP (Phase 4); Phase 3 features and blackout use CPI + FOMC only
+    ev = pl.read_csv("data/reference/macro_events.csv")
+    utc = lambda e: ev.filter((pl.col("event") == e) & pl.col("release_utc").is_not_null())["release_utc"]  # noqa: E731
+    cal = load_calendar()
+    assert len(cal) == len(utc("CPI")) + len(utc("FOMC"))
+    nfp = utc("NFP").str.strptime(pl.Datetime("ms", "UTC"), "%Y-%m-%d %H:%M").dt.epoch("ms").to_numpy()
+    assert len(nfp) and not np.isin(nfp, cal).any()

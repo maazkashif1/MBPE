@@ -495,3 +495,100 @@ Example rows:
 - Extrapolated from this one file: 1428.2 GB compressed
 
 <!-- /gdelt_bulk -->
+
+# Phase 4
+
+<!-- phase4_summary -->
+## Phase 4 summary (written by hand, 2026-10-28; the script never touches this section)
+
+| Area | Result | Status |
+|---|---|---|
+| Order book depth (`bookDepth`, daily) | From **2023-01-01**. Snapshots every ~30 s with 12 bands (±0.2, ±1, ±2, ±3, ±4, ±5% from mid), cumulative depth (BTC) and notional (USD). 4 missing days in range and 5 near-empty files (< 2 KB). Full download ≈ **0.66 GB** | ✅ usable from 2023 |
+| Best bid/ask (`bookTicker`) | Only **2023-05-16 → 2024-03-30** (daily), monthly to 2024-04 (partial). **Not published since**, so it can't feed forward data or the Phase 4 folds after Mar 2024. ~53 GB for that short span | ❌ excluded |
+| NFP calendar | 73 releases (Aug 2020 → Sep 2026 reference months) + 1 cancelled (Oct 2025) + 2 scheduled, added to `data/reference/macro_events.csv`. Phase 3 features and blackout are unchanged (CPI + FOMC only; tested) | ✅ done |
+| Reddit live collector | `mbpe/sources/reddit_live.py` written and tested offline (fake client). **Not started**: waiting for your credentials | ⏸ waiting on you |
+
+Details for each are in the sections below.
+<!-- /phase4_summary -->
+
+<!-- orderbook -->
+## Phase 4: order book feasibility, BTCUSDT USD-M (2026-10-28)
+
+_Generated 2026-10-28 15:29 UTC by `feasibility.py orderbook`_
+
+Source: `data.binance.vision`, from the public S3 listing (file names and sizes; no data downloaded) plus **one** recent daily file per dataset. The missing-day scan uses the listing only: presence of each `.zip` and its `.CHECKSUM`, not row contents (that would mean downloading everything).
+
+| dataset | files | first | last | missing in range | pending (last 3 days) | total size | median file | smallest file |
+|---|---|---|---|---|---|---|---|---|
+| bookDepth daily | 1,392 | 2023-01-01 | 2026-10-27 | 4 | 1 | 0.66 GB | 0.5 MB | 0.00 MB (2024-06-12) |
+| bookTicker daily | 320 | 2023-05-16 | 2024-03-30 | 0 | – (none after 2024-03-30) | 52.58 GB | 146.0 MB | 47.82 MB (2023-09-09) |
+| bookTicker monthly | 12 | 2023-05 | 2024-04 | 0 | – (none after 2024-04) | 53.55 GB | 4444.8 MB | 37.76 MB (2024-04) |
+
+### bookDepth daily: missing / pending
+
+- Missing between first and last file: 2023-02-08 → 2023-02-09 (2 days), 2024-04-18, 2026-10-08
+- Pending: 2026-10-28
+- Files under 10% of the median size: 2023-01-09 (1,645 bytes), 2023-01-15 (1,306 bytes), 2023-01-16 (1,838 bytes), 2023-01-21 (788 bytes), 2024-06-12 (613 bytes)
+- Files without a `.CHECKSUM`: none
+
+### bookDepth: `BTCUSDT-bookDepth-2026-10-27.zip` (downloaded; 0.6 MB zipped)
+
+- Columns: `timestamp, percentage, depth, notional`
+- Rows: 34,560; unique `timestamp` values: 2,880; range 2026-10-27 00:00:01 → 2026-10-27 23:59:30 UTC
+- Spacing between unique timestamps (seconds: count, top 5): 30: 1,559, 29: 562, 31: 555, 32: 69, 28: 67; max gap 35 s
+- First rows: `['2026-10-27 00:00:01', '-5.00', '11332.45600000', '892102221.36810000']`, `['2026-10-27 00:00:01', '-4.00', '10599.72200000', '836015564.65600000']`
+- Percentage bands (rows each): -5.00: 2,880, -4.00: 2,880, -3.00: 2,880, -2.00: 2,880, -1.00: 2,880, -0.20: 2,880, 0.20: 2,880, 1.00: 2,880, 2.00: 2,880, 3.00: 2,880, 4.00: 2,880, 5.00: 2,880
+- Rows per snapshot (rows: snapshots): 12: 2,880
+
+### bookTicker daily: missing / pending
+
+- Missing between first and last file: none
+- **No files after 2024-03-30** (942 days to today): the dataset is no longer published, not a gap.
+- Files under 10% of the median size: none
+- Files without a `.CHECKSUM`: none
+
+### bookTicker: `BTCUSDT-bookTicker-2024-03-30.zip` (downloaded; 87.8 MB zipped)
+
+- Columns: `update_id, best_bid_price, best_bid_qty, best_ask_price, best_ask_qty, transaction_time, event_time`
+- Rows: 7,398,592; unique `transaction_time` values: 4,666,190; range 2024-03-30 00:00:00 → 2024-03-30 23:59:59 UTC
+- Spacing between unique timestamps (seconds: count, top 5): 0.001: 1,173,987, 0.002: 552,038, 0.003: 427,820, 0.004: 340,434, 0.005: 189,355; max gap 1.741 s
+- First rows: `['4307082974693', '69903.60000000', '0.46200000', '69903.70000000', '4.41900000', '1711756800002', '1711756800008']`, `['4307082974976', '69903.60000000', '0.36200000', '69903.70000000', '4.41900000', '1711756800005', '1711756800011']`
+
+### bookTicker monthly: missing / pending
+
+- Missing between first and last file: none
+- **No files after 2024-04** (30 months to today): the dataset is no longer published, not a gap.
+- Files under 10% of the median size: 2024-04 (37,761,761 bytes)
+- Files without a `.CHECKSUM`: none
+
+<!-- /orderbook -->
+
+## Phase 4: NFP calendar (US Employment Situation), written by hand 2026-10-28
+
+Added to `data/reference/macro_events.csv` as `event = NFP`, in the same format as the CPI/FOMC rows:
+- **What was added:** 76 rows. 73 were released (reference months Aug 2020 → Sep 2026), 1 was cancelled (Oct 2025) and 2 are scheduled (Oct and Nov 2026; Dec 2026's release falls on Jan 8, 2027).
+- **Release times:** 08:30 ET for every release, converted to UTC with US daylight saving (12:30 or 13:30 UTC).
+- **Rescheduled or cancelled** (from BLS's revised release dates page):
+  - Sep 2025: Oct 3 → **Nov 20, 2025** (2025 funding lapse);
+  - **Oct 2025: not published.** October establishment-survey data came out with the November release; household-survey data were never collected;
+  - Nov 2025: Dec 5 → **Dec 16, 2025**;
+  - Jan 2026: Feb 6 → **Feb 11, 2026** (2026 lapse in appropriations).
+- **Sources:**
+  - BLS Employment Situation archive, https://www.bls.gov/bls/news-release/empsit.htm. Release dates come from the archived release file names (`empsit_MMDDYYYY.htm`), read twice independently with matching results;
+  - BLS revised release dates for the funding lapses, https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm. It also gives 08:30 ET as the time for each affected release;
+  - BLS release schedule, https://www.bls.gov/schedule/news_release/empsit.htm (scheduled rows; 08:30 AM).
+- **The Phase 3 calendar is unchanged:** `load_calendar()` keeps only CPI and FOMC rows. It returns the same 126 events, byte-identical, before and after. `tests/test_news_features.py::test_phase3_calendar_ignores_other_events` pins this.
+- **Same limitation as CPI:** actual release times are used, so the backtest knows the rescheduled dates (Nov 2025, Dec 2025, Feb 2026) earlier than the market did.
+
+## Phase 4: Reddit live collector, setup only (written by hand 2026-10-28)
+
+- **Code:** `mbpe/sources/reddit_live.py`, using the official Reddit API through PRAW 8 (added as a dependency). It is read-only, application-only access: a "script" app's client ID and secret, with no username or password.
+- **Per run** (schedule every 15 min; example in `deploy/reddit-live.cron`, not installed):
+  - the 100 newest posts of r/Bitcoin and r/CryptoCurrency;
+  - stored fields: `post_id, subreddit, title, created_utc, fetched_at`. No scores, comment counts or other engagement data;
+  - output: `data/raw/reddit_live/<date>/<HHMM>.parquet`, plus a `.json` with run metadata.
+- **Availability:** a post's first `fetched_at` is when it became available to us; `load_posts()` keeps the first sighting. `possible_gap` in the run metadata flags runs where a full page of 100 posts is entirely newer than the previous run, meaning posts may have been missed.
+- **Credentials:** read only from the `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` environment variables, never from repo files. `.gitignore` already covers `.env*` and credential files. The cron example sources an env file outside the repo (`~/.config/mbpe/reddit.env`).
+- **Tests:** `tests/test_reddit_live.py` (3, offline): only the static fields are stored, the first sighting is kept, a gap is flagged, and missing credentials raise.
+- **Not started.** It will run once you confirm the credentials are set. The first live run is also the first check against the real API (rate limits, field names).
+- **Reddit's terms:** the API is free for non-commercial research at low rates, but the Data API terms apply. Collected titles should stay local (`data/` is git-ignored), as GDELT data does.
