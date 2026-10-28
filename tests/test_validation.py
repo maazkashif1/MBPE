@@ -121,6 +121,7 @@ def synthetic_dataset(signal: float, seed: int = 0) -> pl.DataFrame:
         cols |= {
             f"{side}_label": r > 0,
             f"{side}_exit_time": pl.Series(e).cast(pl.Datetime("ms", "UTC")),
+            f"{side}_gross_R": r + 0.2,
             f"{side}_net_R_taker": r,
             f"{side}_net_R_maker_entry_tp": r + 0.1,
             f"{side}_bps_per_R": np.full(len(d), 70.0),
@@ -182,3 +183,47 @@ def test_shuffled_labels_show_no_edge_but_real_labels_do():
     if fake is not None and fake["trades"]:
         assert fake["ci_lo"] <= always + 0.05  # no edge beyond always-trade from shuffled labels
         assert fake["mean_R"] < real["ci_lo"]
+
+
+def test_tuning_never_uses_the_test_fold():
+    from mbpe.validation.tuning import tune
+
+    df = synthetic_dataset(signal=0.5, seed=4)
+    fold = make_folds(CFG)[1]  # 2022Q2: its test period is the last quarter of the synthetic data
+    trials, best = tune(CFG, 1, n_trials=3, folds=[fold], df=df)
+    in_test = pl.col("decision_time") >= datetime(2022, 4, 1, tzinfo=UTC)
+    altered = df.with_columns(
+        *[
+            pl.when(in_test).then(-pl.col(c)).otherwise(pl.col(c)).alias(c)
+            for c in ("long_net_R_taker", "short_net_R_taker")
+        ],
+        *[
+            pl.when(in_test).then(~pl.col(f"{s}_label")).otherwise(pl.col(f"{s}_label")).alias(f"{s}_label")
+            for s in SIDES
+        ],
+    )
+    trials2, best2 = tune(CFG, 1, n_trials=3, folds=[fold], df=altered)
+    assert best == best2 and trials["value"].to_list() == trials2["value"].to_list()
+
+
+def test_volatility_baseline_trades_only_high_atr_hours():
+    df = synthetic_dataset(signal=0.5, seed=5)
+    folds = make_folds(CFG)[:2]
+    tr, _ = run_label_set(
+        "A", CFG, models=("logreg",), rungs={1: ("technical",)}, folds=folds, df=df, scenarios=("taker",)
+    )
+    vol = tr.filter(pl.col("strategy") == "volfilter_vs_logreg")
+    assert vol.height > 0
+    atr = df.select("decision_time", "atr_1h_pct")
+    traded = vol.with_columns(pl.col("decision_time").cast(pl.Datetime("ms", "UTC"))).join(
+        atr, on="decision_time"
+    )
+    # every traded hour's ATR is at least the cutoff, which sits well above the fold's median ATR
+    for f in folds:
+        t = traded.filter(pl.col("fold") == f.index)
+        test_atr = df.filter(
+            pl.col("decision_time").dt.epoch("ms").is_between(f.test_start, f.test_end, closed="left")
+        )["atr_1h_pct"]
+        if t.height:
+            assert t["atr_1h_pct"].min() > test_atr.median()
+    assert set(vol["seed"].unique().to_list()) == set(range(CFG.random_seeds))

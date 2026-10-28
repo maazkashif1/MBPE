@@ -45,6 +45,7 @@ class EvalConfig(BaseModel):
     lgbm_max_rounds: int
     lgbm_early_stopping: int
     logreg_C: float
+    news_features: Path = Path("data/features/news.parquet")  # which news config the harness evaluates
 
 
 def load_eval_config(path: Path = EVAL_CONFIG) -> EvalConfig:

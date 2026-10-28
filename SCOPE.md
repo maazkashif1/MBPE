@@ -145,3 +145,17 @@ Registered before any modeling. **No further label or cost variants will be adde
 - **Blackout** applies to every strategy, baselines included. Operational form: the exit time isn't known at entry, so an entry is blocked if a CPI or FOMC release falls in **[entry − 30 min, entry + 4 h]** (4 h = the label horizon). This blocks a superset of the "entry − 30 min to exit" rule without using the outcome.
 - **Training target:** `label` (net R > 0 under taker costs), for both cost scenarios. Each cost scenario selects its own threshold and is evaluated on its own net R.
 - **Reporting:** every result for both label sets (A, B) × both cost scenarios × all rungs × all models, per fold and overall. No configuration is dropped from the report.
+
+## Phase 3 step 2 additions (pre-registered 2026-10-28, before any tuned results)
+- **Blackout:** the entry-time form ([entry − 30 min, entry + 4 h]) is confirmed as *the* rule. "Entry − 30 min to exit" would look ahead.
+- **Volatility-filter baseline,** in every comparison: random direction, trading only in high-ATR hours.
+  - Per fold, the ATR cutoff is the quantile of `atr_1h_pct` on the **validation slice** such that the share of hours above it equals the model's combined test signal frequency (long + short). Test hours at or above the cutoff become signals, with direction long with probability q_long / (q_long + q_short).
+  - 20 seeds (directions); same blackout and position rule.
+- **Basis-point view:** mean net and gross bps per trade for every model and baseline, and the model's per-fold net-bps advantage over the random and volatility-filter baselines. Costs in bps are the same for every trade, so the advantage reflects direction choice.
+- **Capped tuning (the only tuning in Phase 3 step 2):**
+  - **Scope:** LightGBM, label set A, taker costs, rungs 1–3.
+  - **Search:** Optuna TPE, **30 trials per fold and rung**, using the training and validation slices only. One shared parameter set per fold and rung for both sides.
+  - **Objective:** validation mean net R under the threshold rule, i.e. the trade-weighted mean over sides that meet ≥ 100 validation trades. A trial where no side qualifies scores −10.
+  - **Space:** num_leaves 7–63, min_data_in_leaf 100–1000, learning_rate 0.01–0.1 (log), feature_fraction 0.5–0.9, lambda_l2 0–10. Other settings as in step 1.
+  - **Total trials:** 30 × 18 folds × 3 rungs = **1,620**, recorded for the overfitting (deflated Sharpe / PBO) estimate.
+  - **Evaluation:** the best trial's parameters per fold and rung are refit and evaluated on the test fold exactly as in step 1 (calibration, threshold, simulator, baselines).

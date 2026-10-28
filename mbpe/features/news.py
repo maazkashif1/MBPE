@@ -16,7 +16,8 @@ News (group "news"):
 Calendar (group "calendar"): from data/reference/macro_events.csv (US CPI releases and FOMC statements at
 their actual UTC times; see SCOPE.md for the rescheduling limitation).
 
-Usage: uv run python -m mbpe.features.news   -> data/features/news.parquet + missingness report
+Usage: uv run python -m mbpe.features.news [CONFIG]   (default config/news.yaml -> data/features/news.parquet;
+       config/news_cryptobert.yaml -> data/features/news_cryptobert.parquet) + missingness report
 """
 
 from dataclasses import dataclass
@@ -310,16 +311,17 @@ def load_inputs(cfg: NewsConfig, require_scores: bool = True) -> NewsInputs:
 
 
 def main() -> None:
+    import sys
     import time
 
     from mbpe.features.market import nan_report
 
-    cfg = load_news_config()
+    cfg = load_news_config(Path(sys.argv[1])) if len(sys.argv) > 1 else load_news_config()
     t0 = time.perf_counter()
     inp = load_inputs(cfg)
     df = build_news_features(inp.prep, inp.coverage, inp.events, cfg)
-    NEWS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(NEWS_PATH)
+    cfg.news_output.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(cfg.news_output)
     print(
         f"{df.height:,} decision times x {df.width - 1} features ({cfg.default_sentiment}), "
         f"{time.perf_counter() - t0:.0f}s"

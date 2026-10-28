@@ -46,6 +46,9 @@ class NewsConfig(BaseModel):
     default_sentiment: str = "finbert"  # the sentiment model the news features use
     strong_negative_threshold: float = -0.5  # a cluster's mean score below this counts as strongly negative
     min_coverage: float = Field(0.8, gt=0, le=1)  # news windows / baselines below this batch coverage -> NaN
+    news_output: Path = Path(
+        "data/features/news.parquet"
+    )  # where mbpe.features.news writes this config's features
     device: str = "cpu"
     batch_size: int = 64
 

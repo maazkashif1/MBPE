@@ -81,6 +81,7 @@ def metrics(
             "trades": 0,
             "mean_R": np.nan,
             "bps_per_trade": np.nan,
+            "gross_bps_per_trade": np.nan,
             "return_per_year": 0.0,
             "hit_rate": np.nan,
             "profit_factor": np.nan,
@@ -101,6 +102,9 @@ def metrics(
         "trades": n,
         "mean_R": float(r.mean()),
         "bps_per_trade": float((r * trades["bps_per_R"].to_numpy()).mean()),
+        "gross_bps_per_trade": float((trades["gross_R"].to_numpy() * trades["bps_per_R"].to_numpy()).mean())
+        if "gross_R" in trades.columns
+        else np.nan,
         "return_per_year": float(risk * r.sum() / years),
         "hit_rate": float((r > 0).mean()),
         "profit_factor": float(gains / losses) if losses > 0 else np.inf,

@@ -1,0 +1,14 @@
+# Second news config: identical to news.yaml except the sentiment model (CryptoBERT) and the output file.
+dedup_threshold: 0.85        # cosine similarity (MiniLM embeddings) to join an earlier headline's cluster
+dedup_window_hours: 24       # only headlines from the previous 24 h are compared
+dedup_cluster_max_hours: 24  # a cluster takes no new members more than 24 h after its first one
+embed_model: sentence-transformers/all-MiniLM-L6-v2
+sentiment_models:
+  finbert: ProsusAI/finbert          # default
+  cryptobert: ElKulako/cryptobert    # crypto-specific comparison (Bearish/Neutral/Bullish)
+default_sentiment: cryptobert    # model used by the news features
+strong_negative_threshold: -0.5  # cluster mean score below this = strongly negative
+min_coverage: 0.8                # news windows / baselines need >= 80% of 15-min batches present
+news_output: data/features/news_cryptobert.parquet
+device: mps                  # mps (Apple GPU) or cpu
+batch_size: 64

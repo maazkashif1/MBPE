@@ -27,3 +27,4 @@ lgbm:
 lgbm_max_rounds: 3000
 lgbm_early_stopping: 100
 logreg_C: 1.0
+news_features: data/features/news.parquet   # FinBERT; switch to data/features/news_cryptobert.parquet after labeling
