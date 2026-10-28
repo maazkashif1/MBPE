@@ -326,3 +326,95 @@ Passing **only triggers a forward test.** Not passing ends Phase 5 with the Phas
 - **Pass criterion:** written and committed **before the forward test starts**, and before any forward-period outcome is looked at.
 
 **Multiple testing.** Phase 5 adds configurations on data already used in Phases 3–4. They are added to the trial count for any deflated Sharpe estimate.
+
+## Phase 6: delivery of the full scope doc (decided 2026-10-28, before any Phase 6 code, data or result)
+
+**Basis (your decision, 2026-10-28).** "Done" now means every component of Sarosh's scope doc ("MBPE Project Scope, Technical Plan, Open Questions and Timeline"). Where the locked scope at the top of this file deferred or dropped a component, the scope doc now wins. Other decisions:
+- **Data:** free sources only.
+- **Paper trading:** an internal simulator on live data.
+- **What gets paper-traded:** the final scoped system, regardless of its backtest result, as a pre-registered forward test.
+
+**Honesty constraints (unchanged).**
+- **History is development evidence only.** 2021–2026 has been studied in Phases 3–5 and the holdout is spent, so historical Phase 6 results can't establish an edge. Only the forward test can.
+- **Same safeguards as before:** pre-registration before each experiment, leakage tests, generated tables, every result reported.
+
+### Workstream A: data streams (scope doc §2)
+| Component | Source (free) | History for backtests? | Status |
+|---|---|---|---|
+| Market: OHLCV, RSI, ATR, VWAP divergence, BB %B, realized vol | Binance archive + REST | yes, from 2020 | built |
+| Derivatives: funding, open interest | Binance archive + REST | yes, from 2020 | built |
+| Derivatives: mark price / premium index (basis to mark, premium z-score) | Binance archive (`markPriceKlines`, `premiumIndexKlines`) + REST `premiumIndex` | yes, from 2019 | new |
+| Derivatives: liquidation volume and long/short liquidation imbalance | Binance WebSocket `btcusdt@forceOrder` (REST endpoint retired; at most one liquidation per second is pushed, so it undercounts) | **no: forward only** | new collector |
+| News: sentiment, CPI/FOMC/NFP calendar | GDELT GKG + FinBERT; calendar CSV | yes, from 2020 | built |
+| News: regulatory and major announcements | keyword flags on GDELT titles (SEC, ETF, ban, lawsuit, approval, …; list pre-registered with the features) | yes, from 2020 | new |
+| News: CryptoPanic, RSS (CoinDesk, Cointelegraph, The Block, Decrypt, Bitcoin Magazine) | CryptoPanic free API (**your key**, env var); RSS feeds | **no: forward only** | new collectors |
+| Social: mention volume and velocity, sentiment polarity and distribution, activity change | Reddit r/Bitcoin + r/CryptoCurrency via PRAW (**your credentials**, env vars); FinBERT on titles | **no: forward only** | collector built, not started; features new |
+| Social: viral / engagement indicators | Reddit score and comment count **as observed at each fetch**, stored with the fetch time; a feature at t uses only values observed before t | **no: forward only** | new |
+| Social: X | paid API | excluded by the free-only decision | — |
+
+All new streams follow the existing rules: available-at timestamps, staleness limits, NaN for gaps (never zero), and a truncation leakage test per feature.
+
+### Workstream B: models (scope doc §3)
+- **B1. Primary model: three classes per side** (+1 take-profit first, −1 stop first, 0 expiry), on the Phase 3 labels (+2/−1 × ATR(14, 1h), 4 h, entry at t + 1 min). LightGBM **and** CatBoost, fixed settings, isotonic calibration per class.
+  - **Decision rule** (scope doc open questions 6–7): per side, expected net R = Σ P(class) × the mean net R of that class in the training slice (taker). The candidate trade is the side with the higher expected net R, if that is > 0; otherwise no trade.
+- **B2. Meta-labeling filter.**
+  - **Inputs:** the primary model's class probabilities, the proposed side, and volatility features (ATR %, realized vol 1h/4h/24h). No other inputs, per the scope doc.
+  - **Target:** the candidate trade's net R > 0 after taker costs (time-expiry trades count by their actual net R).
+  - **Training data:** only **out-of-sample** primary predictions. For test fold k, the meta-model trains on the primary model's walk-forward test-fold predictions from folds < k (purged, with the 48 h embargo against fold k). Meta-labeling starts at the first fold with ≥ 4 earlier folds of out-of-sample predictions, and the primary-only comparison uses exactly the same folds.
+  - **Threshold:** execute when P(success) ≥ **0.60** (fixed, headline). A threshold chosen on validation data is reported alongside.
+- **B3. Interpretability.** SHAP TreeExplainer on the primary model and the meta-model in every fold:
+  - mean |SHAP| per feature and per feature group (market, derivatives, news, calendar, regulatory);
+  - stability across folds (Spearman rank correlation of feature importances between folds).
+- **Configurations:** feature sets = Phase 3 rung 3 + the new historical features (mark/premium, regulatory). Label set A. Both cost scenarios. LightGBM and CatBoost. Primary-only vs primary + meta. **No tuning.**
+- **Decision interval:** hourly, as in Phase 3 (the scope doc's 15-minute interval was "subject to confirmation").
+- **Headline model:** **LightGBM** primary + meta-filter, label set A, taker costs. CatBoost is reported but doesn't decide which model is frozen.
+
+### Workstream C: validation and analysis (scope doc §4, weeks 5–6)
+- **Validation:** purged walk-forward, Phase 3 folds (training from 2021-01-01; 18 test folds 2022-01-01 → 2026-04-26), **48 h embargo** (scope doc §4.3), uniqueness weights, one position at a time, CPI/FOMC/NFP blackout ([entry − 30 min, entry + 4 h]).
+- **Comparisons:** primary vs primary + meta (the scope doc's required comparison), plus the existing controls: always-long/short, random, volatility filter, and a 20-permutation shuffled-label control.
+- **Targets table:** hit rate, Sharpe, profit factor and max drawdown for every configuration, against 54–58% / ≥ 1.8 / ≥ 1.6 / < 12%. Reported as met / not met; **they are research objectives, not pass criteria** (scope doc §4).
+- **Regime analysis (reporting only):** results by volatility tercile (trailing 30-day realized vol, computed before each decision) and by trend (sign of the trailing 30-day return).
+- **Failure cases:** the worst folds and worst trades, broken down by exit reason, regime and side.
+
+### Workstream D: integration and paper-trading readiness (scope doc weeks 6–7)
+- **Live inference:** every hour,
+  - pull the latest data from free sources (Binance REST, GDELT live, the new collectors);
+  - compute features with **the same feature code** as the backtest;
+  - run the frozen primary model and meta-model;
+  - append each prediction to a prediction log (inputs hash, probabilities, decision, model version, timestamps).
+- **Live/archive parity:** features computed from live data must match features recomputed from the archives once those publish (tolerance pre-registered), as was done for GDELT.
+- **Paper executor (internal simulator):**
+  - entry at the next 1-minute open plus the backtest's taker costs;
+  - barriers watched on live 1-minute candles, with the same tie and gap rules as the labels;
+  - funding accrued from live settlements, one position at a time, blackout applied;
+  - an append-only trade ledger.
+- **Operations:** structured logs, retries, alerts when a data source goes stale or a run fails, and a daily summary file. The scheduler is cron/systemd (examples in `deploy/`), with Docker Compose for the collectors and the inference loop. CI runs ruff, the tests and the generated-table check on every push. A runbook covers setup and operational limits.
+- **No real orders, ever.** No exchange keys are used.
+
+### Workstream E: forward test (the only real test)
+- **Models:** the final scoped system (B1 + B2 with **LightGBM**), trained on all data before 2026-04-26 with the settings above, then **frozen** and paper-traded.
+- **Duration:** a verdict only after **both** ≥ 6 months **and** ≥ 100 paper trades.
+- **Pass criterion:**
+  - mean net R > 0 with the 95% CI lower bound > 0;
+  - mean net R above always-long's over the same forward period.
+
+  With per-trade dispersion of roughly 1 R, 100 trades give a CI of about ±0.2 R, so this can only detect a large edge or a clear failure.
+- **Forward-only streams** (liquidations, social, CryptoPanic/RSS) aren't in the frozen model: there's no history to train on. They are collected from day 1. After 6 months, a second, separately pre-registered model including them can be trained on that forward data and forward-tested in turn.
+
+### Order of work (each step reviewed before the next; scope doc timeline)
+1. Start the forward-only collectors early, since forward data accrues in real time. This needs your credentials and confirmation to run them.
+2. Workstream A historical features, then B, then C (one evaluation run, reported).
+3. Workstream D, then freeze and start the forward test (E). Code and runbook delivered at the end of D.
+
+### Decisions (2026-10-28; all proposals accepted)
+1. **Frozen forward model:** LightGBM (primary + meta-filter). CatBoost is reported historically only.
+2. **Decision interval:** hourly.
+3. **Social engagement:** Reddit score and comment count are recorded as observed at each fetch, with the fetch time, and a feature at t uses only values observed before t. This **supersedes the Phase 4 step 0 rule** that excluded engagement data.
+4. **Forward pass criterion:** as stated in Workstream E (mean net R > 0 with the 95% CI lower bound > 0, and above always-long; verdict only after ≥ 6 months and ≥ 100 trades).
+5. **Meta-labeling start:** the first fold with ≥ 4 earlier folds of out-of-sample primary predictions (folds 4–17). The primary-only comparison uses the same folds.
+
+**Dependencies (yours, before the forward-only collectors start):**
+- a Reddit "script" app (client ID and secret) and a CryptoPanic API key, set as environment variables outside the repo;
+- confirmation of where the collectors run (this machine or a VM).
+
+The RSS and liquidation collectors need no credentials.
