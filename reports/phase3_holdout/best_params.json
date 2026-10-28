@@ -1,0 +1,40 @@
+{
+  "folds_ms": [
+    [
+      1777161600000,
+      1785024000000
+    ],
+    [
+      1785024000000,
+      1792958400000
+    ]
+  ],
+  "finbert/r1": {
+    "num_leaves": 17,
+    "min_data_in_leaf": 826,
+    "learning_rate": 0.06736124801437889,
+    "feature_fraction": 0.5972190669194551,
+    "lambda_l2": 6.868432740159828
+  },
+  "finbert/r2": {
+    "num_leaves": 36,
+    "min_data_in_leaf": 192,
+    "learning_rate": 0.08541175022411433,
+    "feature_fraction": 0.6259173509587206,
+    "lambda_l2": 7.588690340190968
+  },
+  "finbert/r3": {
+    "num_leaves": 25,
+    "min_data_in_leaf": 448,
+    "learning_rate": 0.01586453711358478,
+    "feature_fraction": 0.6647325167946369,
+    "lambda_l2": 3.477442313110368
+  },
+  "cryptobert/r3": {
+    "num_leaves": 60,
+    "min_data_in_leaf": 648,
+    "learning_rate": 0.01088675007458222,
+    "feature_fraction": 0.8843753903257007,
+    "lambda_l2": 9.543675030521824
+  }
+}

@@ -1,6 +1,6 @@
-# MBPE findings: DRAFT
+# MBPE findings
 
-> **DRAFT, not final.** It covers the walk-forward evaluation up to the holdout start (2026-04-26 00:00 UTC). **The holdout has not been run.** Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
+> Final (tag `mbpe-research-v1`). It covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
 
 ## Question
 Can hourly signals from BTCUSDT perpetual market data, derivatives data and news headlines predict triple-barrier trade outcomes well enough to make money **after costs**? In particular, does adding news improve on market data alone? The pre-registered kill criterion: if the news layer doesn't improve net-of-costs results across folds and the holdout, that is the finding.
@@ -26,6 +26,7 @@ Can hourly signals from BTCUSDT perpetual market data, derivatives data and news
 - **It is a fraction of the round-trip trading cost,** so no configuration makes money after costs.
 - **News features don't improve on market data.**
 - **The overfitting analysis leaves no sign of a real profitable edge.**
+- **The pre-registered holdout confirms the negative finding:** the headline configuration loses money on the six unseen months too (holdout section).
 
 ## What was tested
 - **Market:** BTCUSDT USD-M perpetual. Decisions every hour, with one open position at most.
@@ -143,10 +144,27 @@ Within each label set x cost scenario (same costs, so the configurations are alt
 - **One market and one barrier geometry:** BTCUSDT, +2/−1 ATR, 4 h horizon. Other horizons, barrier shapes or instruments weren't explored, by design.
 - **The overfitting statistics are themselves estimates.** The DSR variance comes from the evaluated configurations, not the tuning trials. PBO from one dataset is noisy (see `PROGRESS.md`, Phase 3 step 3).
 
-## Open decision: the holdout
-The holdout (decision times from 2026-04-26 00:00 UTC) is untouched; the guard logs any access and none has occurred. It can be spent once. Options:
-- **(a) Run the pre-registered evaluation on the holdout as it stands,** to confirm the negative result on unseen data. This closes the study under the kill criterion.
-- **(b) Keep the holdout unspent** and record the walk-forward result as the finding. It's already decisive, and spending the holdout on a configuration with no edge adds little.
-- **(c) Change the question** (e.g. horizon, barrier geometry, cost model or data sources) and pre-register that change first. The holdout would then belong to the new question, and its results would count only once.
+## Holdout (run once, pre-registered)
+The holdout (decision times from 2026-04-26 00:00 UTC to the last labelled hour) was spent once, under the protocol pre-registered in `SCOPE.md` ("Phase 3 holdout test") and committed before any access:
+- **Fit:** every configuration was fit once on everything before the holdout, with the same purge, validation slice, calibration, threshold rule and baselines as the walk-forward folds. Tuned models got a fresh 30-trial study on that final validation slice.
+- **Configurations:** all 32 evaluated configurations, plus every baseline and the shuffled-label control, are reported in `PROGRESS.md` ("Phase 3 holdout"). Each holdout result sits next to its walk-forward result.
+- **Access:** every holdout load is logged in `data/logs/holdout_access.jsonl`. Nothing else touched it.
 
-This draft makes no recommendation between them. It's your call.
+<!-- generated:holdout_headline -->
+| | |
+|---|---|
+| headline configuration | label set A, taker costs, tuned LightGBM, rung 3 (FinBERT) |
+| walk-forward (2022-01-01 → 2026-04-26): mean net R [95% CI] (trades) | -0.122 [-0.160, -0.085] (2,760) |
+| **holdout: mean net R [95% CI] (trades)** | **-0.091 [-0.325, +0.115]** (82) |
+| holdout: net / gross bps per trade | -13.9 / -0.0 |
+| **pre-registered interpretation** | mean net R ≤ 0: **the negative finding is confirmed** |
+| configurations with holdout mean net R > 0 (of 32) | 2 |
+| of those, with a 95% CI excluding zero | 0 |
+<!-- /generated:holdout_headline -->
+
+**Outcome under the pre-registered interpretation: the headline mean net R is at or below zero, so the negative finding is confirmed.**
+- **The headline holdout CI is wide,** because the tuned model trades rarely over six months. Taken alone, the holdout couldn't separate a small edge from none. It doesn't need to: it agrees with the walk-forward, which already ruled out an edge after costs at much tighter precision.
+- **The few configurations with a positive holdout mean** are counted in the headline table and listed in `PROGRESS.md` ("Phase 3 holdout"). All have CIs that include zero, which is the pattern expected from chance across 32 configurations. They are reported, not acted on; any such configuration that is CryptoBERT-based can't replace FinBERT by pre-registration anyway.
+
+## Conclusion
+Under free data, hourly decisions on BTCUSDT perpetuals and this barrier geometry, **there is no tradable edge after costs.** The models pick up a few basis points of gross directional signal, a fraction of the round-trip cost. **News headlines (GDELT, FinBERT sentiment) add nothing over market and derivatives data,** so the pre-registered kill criterion on the news layer is met: across the walk-forward folds and on the holdout. The study is closed at this point. Any new question (horizon, barrier geometry, execution model, data sources) needs its own pre-registration and fresh unseen data.

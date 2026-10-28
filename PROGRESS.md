@@ -1271,3 +1271,94 @@ How to read this:
   - expected max Sharpe grows with N;
   - daily returns sum by exit day.
 - `tests/test_progress.py`: every generated table matches its source, and every registered block is used.
+
+## Phase 3 holdout (2026-10-28, run once)
+
+Pre-registered in `SCOPE.md` ("Phase 3 holdout test") and committed before any access (89d0f7b). The runner was committed before the run (df2a687) after a smoke test on pre-holdout data only.
+
+**Run:** `uv run python -m mbpe.validation.holdout` → `reports/phase3_holdout/` (`overall_metrics.csv`, `fold_metrics.csv`, `thresholds.csv`, `tuning.csv`, `best_params.json`).
+- **Access log:** `data/logs/holdout_access.jsonl` was created by this run. It holds one entry per holdout load: label sets A and B, for FinBERT and CryptoBERT news features. There were no other accesses.
+- **Fit:** one fit per configuration on everything before 2026-04-26, with the same purge, validation slice, calibration, threshold rule and baselines. Tuned models get a fresh 30-trial study on that final validation slice (FinBERT rungs 1–3, CryptoBERT rung 3).
+- **Folds:** results are reported over the whole holdout and in two holdout folds: 1 = 2026-04-26 → 07-26, 2 = 07-26 → the last labelled hour. Fold 2 is never trained on fold 1.
+- **Walk-forward columns:** 2022-01-01 → 2026-04-26, from Phase 3 steps 2 and 2b.
+
+### Headline and pre-registered interpretation
+
+<!-- generated:holdout_headline -->
+| | |
+|---|---|
+| headline configuration | label set A, taker costs, tuned LightGBM, rung 3 (FinBERT) |
+| walk-forward (2022-01-01 → 2026-04-26): mean net R [95% CI] (trades) | -0.122 [-0.160, -0.085] (2,760) |
+| **holdout: mean net R [95% CI] (trades)** | **-0.091 [-0.325, +0.115]** (82) |
+| holdout: net / gross bps per trade | -13.9 / -0.0 |
+| **pre-registered interpretation** | mean net R ≤ 0: **the negative finding is confirmed** |
+| configurations with holdout mean net R > 0 (of 32) | 2 |
+| of those, with a 95% CI excluding zero | 0 |
+<!-- /generated:holdout_headline -->
+
+### Every evaluated configuration (32)
+
+Net / gross bps are per trade. The random and volatility-filter baselines are medians over 20 seeds at the model's own holdout trade frequency.
+
+<!-- generated:holdout_configs -->
+| label set | scenario | model | rung | scorer | walk-forward: trades | walk-forward: mean net R [95% CI] | walk-forward: net / gross bps | holdout: trades | holdout: mean net R [95% CI] | holdout: net / gross bps | holdout fold 1 / fold 2: mean net R (trades) | holdout random: net R (median) | holdout vol filter: net R (median) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A | maker_entry_tp | lgbm | 1 | finbert | 4,216 | -0.065 [-0.098, -0.032] | -4.8 / +3.4 | 210 | -0.138 [-0.261, +0.008] | -8.9 / -0.3 | -0.20 (130) / -0.04 (80) | -0.174 | -0.136 |
+| A | maker_entry_tp | lgbm | 2 | finbert | 4,287 | -0.072 [-0.106, -0.040] | -5.7 / +2.6 | 303 | -0.090 [-0.193, +0.048] | -6.9 / +1.6 | -0.15 (188) / +0.01 (115) | -0.177 | -0.015 |
+| A | maker_entry_tp | lgbm | 3 | cryptobert | 5,021 | -0.077 [-0.107, -0.047] | -5.2 / +3.1 | 163 | +0.017 [-0.111, +0.207] | -1.1 / +7.1 | -0.08 (97) / +0.16 (66) | -0.184 | -0.100 |
+| A | maker_entry_tp | lgbm | 3 | finbert | 3,946 | -0.055 [-0.086, -0.024] | -3.5 / +4.7 | 125 | -0.036 [-0.230, +0.150] | -4.3 / +3.7 | -0.13 (68) / +0.08 (57) | -0.199 | -0.026 |
+| A | maker_entry_tp | logreg | 1 | finbert | 4,539 | -0.092 [-0.123, -0.061] | -5.1 / +3.3 | 455 | -0.174 [-0.272, -0.059] | -11.9 / -3.4 | -0.17 (249) / -0.17 (206) | -0.162 | -0.052 |
+| A | maker_entry_tp | logreg | 2 | finbert | 4,967 | -0.090 [-0.120, -0.061] | -4.5 / +3.8 | 152 | -0.081 [-0.241, +0.136] | -6.3 / +2.2 | -0.29 (88) / +0.21 (64) | -0.197 | -0.126 |
+| A | maker_entry_tp | logreg | 3 | finbert | 5,771 | -0.095 [-0.122, -0.069] | -4.9 / +3.5 | 1,092 | -0.142 [-0.209, -0.063] | -7.1 / +1.1 | -0.16 (542) / -0.12 (550) | -0.164 | -0.166 |
+| A | taker | lgbm | 1 | finbert | 4,020 | -0.130 [-0.162, -0.098] | -10.2 / +3.8 | 210 | -0.209 [-0.334, -0.063] | -14.4 / -0.3 | -0.27 (130) / -0.12 (80) | -0.299 | -0.184 |
+| A | taker | lgbm | 2 | finbert | 4,155 | -0.135 [-0.169, -0.103] | -10.9 / +3.1 | 303 | -0.167 [-0.265, -0.030] | -12.4 / +1.6 | -0.22 (188) / -0.08 (115) | -0.300 | -0.070 |
+| A | taker | lgbm | 3 | cryptobert | 4,916 | -0.151 [-0.180, -0.121] | -10.6 / +3.3 | 163 | -0.057 [-0.182, +0.131] | -6.9 / +7.1 | -0.15 (97) / +0.08 (66) | -0.308 | -0.144 |
+| A | taker | lgbm | 3 | finbert | 3,946 | -0.127 [-0.158, -0.096] | -9.2 / +4.7 | 125 | -0.115 [-0.296, +0.066] | -10.2 / +3.7 | -0.20 (68) / -0.02 (57) | -0.324 | -0.068 |
+| A | taker | lgbm_tuned | 1 | finbert | 2,705 | -0.126 [-0.164, -0.088] | -10.1 / +3.8 | 72 | -0.152 [-0.379, +0.025] | -19.8 / -5.8 | -0.21 (50) / -0.03 (22) | -0.265 | -0.179 |
+| A | taker | lgbm_tuned | 2 | finbert | 2,433 | -0.093 [-0.136, -0.048] | -5.6 / +8.3 | 99 | -0.022 [-0.264, +0.266] | -5.1 / +8.8 | -0.13 (55) / +0.11 (44) | -0.299 | -0.054 |
+| A | taker | lgbm_tuned | 3 | cryptobert | 2,698 | -0.140 [-0.178, -0.099] | -11.1 / +2.8 | 105 | -0.102 [-0.320, +0.104] | -10.4 / +3.5 | -0.22 (65) / +0.10 (40) | -0.336 | -0.099 |
+| A | taker | lgbm_tuned | 3 | finbert | 2,760 | -0.122 [-0.160, -0.085] | -8.8 / +5.1 | 82 | -0.091 [-0.325, +0.115] | -13.9 / -0.0 | -0.22 (44) / +0.06 (38) | -0.346 | -0.182 |
+| A | taker | logreg | 1 | finbert | 4,462 | -0.172 [-0.204, -0.138] | -10.7 / +3.3 | 455 | -0.272 [-0.365, -0.156] | -17.5 / -3.4 | -0.26 (249) / -0.28 (206) | -0.283 | -0.112 |
+| A | taker | logreg | 2 | finbert | 4,606 | -0.162 [-0.192, -0.129] | -9.5 / +4.5 | 152 | -0.163 [-0.323, +0.051] | -11.9 / +2.2 | -0.37 (88) / +0.12 (64) | -0.319 | -0.171 |
+| A | taker | logreg | 3 | finbert | 5,610 | -0.181 [-0.210, -0.153] | -10.6 / +3.4 | 799 | -0.316 [-0.384, -0.245] | -17.6 / -3.5 | -0.27 (393) / -0.36 (406) | -0.313 | -0.208 |
+| B | maker_entry_tp | lgbm | 1 | finbert | 4,227 | -0.051 [-0.071, -0.032] | -8.0 / +0.8 | 268 | -0.077 [-0.163, +0.007] | -9.6 / -0.7 | -0.13 (164) / +0.00 (104) | -0.088 | -0.050 |
+| B | maker_entry_tp | lgbm | 2 | finbert | 3,186 | -0.048 [-0.068, -0.028] | -6.7 / +2.1 | 402 | -0.135 [-0.200, -0.054] | -17.0 / -8.0 | -0.15 (237) / -0.11 (165) | -0.094 | -0.050 |
+| B | maker_entry_tp | lgbm | 3 | cryptobert | 4,211 | -0.060 [-0.080, -0.040] | -9.0 / -0.2 | 204 | +0.016 [-0.079, +0.122] | +2.4 / +11.1 | -0.08 (117) / +0.15 (87) | -0.090 | -0.076 |
+| B | maker_entry_tp | lgbm | 3 | finbert | 4,220 | -0.051 [-0.071, -0.032] | -7.1 / +1.8 | 509 | -0.082 [-0.133, -0.024] | -10.7 / -2.1 | -0.09 (270) / -0.07 (239) | -0.094 | -0.076 |
+| B | maker_entry_tp | logreg | 1 | finbert | 5,110 | -0.049 [-0.066, -0.032] | -5.9 / +2.9 | 157 | -0.030 [-0.130, +0.095] | -4.0 / +4.9 | -0.15 (74) / +0.07 (83) | -0.074 | -0.119 |
+| B | maker_entry_tp | logreg | 2 | finbert | 4,649 | -0.055 [-0.074, -0.037] | -7.4 / +1.5 | 293 | -0.067 [-0.141, +0.021] | -7.1 / +1.9 | -0.11 (158) / -0.01 (135) | -0.097 | +0.005 |
+| B | maker_entry_tp | logreg | 3 | finbert | 5,606 | -0.058 [-0.076, -0.040] | -6.9 / +2.0 | 271 | -0.042 [-0.121, +0.039] | -7.6 / +1.1 | -0.11 (127) / +0.02 (144) | -0.082 | -0.052 |
+| B | taker | lgbm | 1 | finbert | 3,756 | -0.076 [-0.096, -0.057] | -11.8 / +2.1 | 268 | -0.116 [-0.202, -0.033] | -14.7 / -0.7 | -0.16 (164) / -0.04 (104) | -0.137 | -0.079 |
+| B | taker | lgbm | 2 | finbert | 3,186 | -0.079 [-0.099, -0.060] | -11.8 / +2.1 | 402 | -0.177 [-0.242, -0.097] | -22.1 / -8.0 | -0.19 (237) / -0.15 (165) | -0.143 | -0.084 |
+| B | taker | lgbm | 3 | cryptobert | 4,184 | -0.093 [-0.113, -0.073] | -14.1 / -0.1 | 204 | -0.023 [-0.116, +0.083] | -2.8 / +11.1 | -0.12 (117) / +0.10 (87) | -0.139 | -0.103 |
+| B | taker | lgbm | 3 | finbert | 3,793 | -0.077 [-0.097, -0.056] | -11.3 / +2.6 | 509 | -0.127 [-0.178, -0.071] | -15.9 / -2.1 | -0.14 (270) / -0.12 (239) | -0.143 | -0.111 |
+| B | taker | logreg | 1 | finbert | 4,817 | -0.083 [-0.102, -0.066] | -10.8 / +3.2 | 157 | -0.074 [-0.172, +0.049] | -9.1 / +4.9 | -0.19 (74) / +0.03 (83) | -0.123 | -0.144 |
+| B | taker | logreg | 2 | finbert | 4,634 | -0.091 [-0.109, -0.072] | -12.4 / +1.6 | 293 | -0.111 [-0.186, -0.025] | -12.2 / +1.9 | -0.15 (158) / -0.06 (135) | -0.147 | -0.024 |
+| B | taker | logreg | 3 | finbert | 5,606 | -0.096 [-0.114, -0.078] | -12.0 / +2.0 | 271 | -0.089 [-0.167, -0.009] | -12.7 / +1.1 | -0.15 (127) / -0.03 (144) | -0.131 | -0.080 |
+<!-- /generated:holdout_configs -->
+
+### Always-trade baselines and the shuffled-label control
+
+<!-- generated:holdout_baselines -->
+| label set | scenario | baseline | rung | walk-forward: trades | walk-forward: mean net R [95% CI] | walk-forward: net / gross bps | holdout: trades | holdout: mean net R [95% CI] | holdout: net / gross bps |
+|---|---|---|---|---|---|---|---|---|---|
+| A | maker_entry_tp | always_long | – | 10,699 | -0.145 [-0.165, -0.122] | -9.0 / -0.5 | 1,241 | -0.171 [-0.235, -0.109] | -8.8 / -0.3 |
+| A | maker_entry_tp | always_short | – | 10,613 | -0.132 [-0.154, -0.110] | -8.1 / +0.1 | 1,239 | -0.160 [-0.224, -0.089] | -6.5 / +1.7 |
+| A | maker_entry_tp | lgbm_shuffled | 3 | 6,742 | -0.104 [-0.130, -0.077] | -5.3 / +3.0 | 1,210 | -0.182 [-0.250, -0.113] | -7.6 / +0.6 |
+| A | taker | always_long | – | 10,699 | -0.239 [-0.260, -0.217] | -14.7 / -0.5 | 1,241 | -0.295 [-0.360, -0.231] | -14.4 / -0.3 |
+| A | taker | always_short | – | 10,613 | -0.227 [-0.249, -0.204] | -13.7 / +0.1 | 1,239 | -0.284 [-0.351, -0.210] | -12.2 / +1.7 |
+| A | taker | lgbm_shuffled | 3 | 6,938 | -0.208 [-0.235, -0.180] | -11.4 / +2.5 | 1,210 | -0.304 [-0.372, -0.234] | -13.3 / +0.6 |
+| B | maker_entry_tp | always_long | – | 8,179 | -0.066 [-0.081, -0.052] | -9.3 / -0.1 | 951 | -0.093 [-0.136, -0.050] | -9.9 / -0.8 |
+| B | maker_entry_tp | always_short | – | 8,156 | -0.068 [-0.082, -0.054] | -9.2 / -0.6 | 941 | -0.085 [-0.128, -0.039] | -8.3 / +0.4 |
+| B | taker | always_long | – | 8,179 | -0.105 [-0.120, -0.091] | -14.4 / -0.1 | 951 | -0.143 [-0.185, -0.100] | -15.0 / -0.8 |
+| B | taker | always_short | – | 8,156 | -0.107 [-0.121, -0.092] | -14.4 / -0.6 | 941 | -0.134 [-0.178, -0.089] | -13.5 / +0.4 |
+<!-- /generated:holdout_baselines -->
+
+### Reading
+- **The headline configuration loses money on the holdout,** so under the pre-registered rule the negative finding is confirmed.
+- **Its holdout CI is much wider than in the walk-forward,** because the tuned model trades rarely over six months. On its own, the holdout couldn't distinguish a small edge from none. It is the walk-forward plus the holdout together that close the question.
+- **Across the other configurations,** the holdout looks like the walk-forward:
+  - nearly all are negative;
+  - the few positive ones have CIs that include zero (counts in the headline table);
+  - rung 3 (FinBERT news) doesn't consistently beat rungs 1–2;
+  - every always-trade baseline and the shuffled control lose money.

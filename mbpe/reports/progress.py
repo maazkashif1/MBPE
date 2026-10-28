@@ -176,6 +176,146 @@ def phase3_step3_pbo() -> str:
     return out
 
 
+# ---------- Phase 3 holdout ----------
+
+HO = R / "phase3_holdout"
+CONFIG_KEYS = ["label_set", "scenario", "strategy", "rung", "scorer"]
+
+
+def _walk_forward_overall() -> pl.DataFrame:
+    fin = pl.read_csv(R / "phase3_step2/overall_metrics.csv").with_columns(scorer=pl.lit("finbert"))
+    cb = pl.read_csv(R / "phase3_step2_cryptobert/overall_metrics.csv").filter(
+        pl.col("scorer") == "cryptobert"
+    )
+    return pl.concat([fin, cb.select(fin.columns)])
+
+
+def _ci(r: dict | None) -> str:
+    return "–" if r is None else f"{fmt(r['mean_R'])} [{fmt(r['ci_lo'])}, {fmt(r['ci_hi'])}]"
+
+
+def _one(df: pl.DataFrame, **k) -> dict | None:
+    x = df.filter(*[pl.col(c) == v for c, v in k.items()])
+    return x.row(0, named=True) if x.height else None
+
+
+def _bps(r: dict | None) -> str:
+    return "–" if r is None else f"{fmt(r['bps_per_trade'], 1)} / {fmt(r['gross_bps_per_trade'], 1)}"
+
+
+def _trades(r: dict | None) -> str:
+    return "–" if r is None else f"{r['trades']:,}"
+
+
+@block("holdout_configs")
+def holdout_configs() -> str:
+    """Every evaluated configuration: walk-forward (2022-01-01 → holdout) next to the holdout."""
+    wf, ho = _walk_forward_overall(), pl.read_csv(HO / "overall_metrics.csv")
+    pf = pl.read_csv(HO / "fold_metrics.csv")
+    configs = (
+        ho.filter((pl.col("seed") == -1) & pl.col("strategy").is_in(["logreg", "lgbm", "lgbm_tuned"]))
+        .select(CONFIG_KEYS)
+        .sort(CONFIG_KEYS)
+    )
+    out = [
+        "| label set | scenario | model | rung | scorer | walk-forward: trades "
+        "| walk-forward: mean net R [95% CI] "
+        "| walk-forward: net / gross bps | holdout: trades | holdout: mean net R [95% CI] "
+        "| holdout: net / gross bps | holdout fold 1 / fold 2: mean net R (trades) "
+        "| holdout random: net R (median) | holdout vol filter: net R (median) |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for c in configs.iter_rows(named=True):
+        w, h = _one(wf, seed=-1, **c), _one(ho, seed=-1, **c)
+        folds = []
+        for f in (18, 19):
+            x = _one(pf, seed=-1, fold=f, **c)
+            folds.append("·" if not x or not x["trades"] else f"{fmt(x['mean_R'], 2)} ({x['trades']})")
+        base = []
+        for b in ("random", "volfilter"):
+            k = {**c, "strategy": f"{b}_vs_{c['strategy']}"}
+            base.append(fmt(ho.filter(*[pl.col(n) == v for n, v in k.items()])["mean_R"].median()))
+        out.append(
+            f"| {c['label_set']} | {c['scenario']} | {c['strategy']} | {c['rung']} | {c['scorer']} "
+            f"| {_trades(w)} | {_ci(w)} | {_bps(w)} | {_trades(h)} | {_ci(h)} | {_bps(h)} "
+            f"| {' / '.join(folds)} | {base[0]} | {base[1]} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("holdout_baselines")
+def holdout_baselines() -> str:
+    """Always-trade baselines and the shuffled-label control, walk-forward next to holdout."""
+    wf, ho = _walk_forward_overall(), pl.read_csv(HO / "overall_metrics.csv")
+    rows = (
+        ho.filter(
+            (pl.col("seed") == -1)
+            & pl.col("strategy").is_in(["always_long", "always_short", "lgbm_shuffled"])
+        )
+        .select(CONFIG_KEYS)
+        .sort(CONFIG_KEYS)
+    )
+    out = [
+        "| label set | scenario | baseline | rung | walk-forward: trades "
+        "| walk-forward: mean net R [95% CI] "
+        "| walk-forward: net / gross bps | holdout: trades | holdout: mean net R [95% CI] "
+        "| holdout: net / gross bps |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for c in rows.iter_rows(named=True):
+        w, h = _one(wf, seed=-1, **c), _one(ho, seed=-1, **c)
+        out.append(
+            f"| {c['label_set']} | {c['scenario']} | {c['strategy']} | {c['rung'] or '–'} "
+            f"| {_trades(w)} | {_ci(w)} | {_bps(w)} | {_trades(h)} | {_ci(h)} | {_bps(h)} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+def holdout_outcome(r: dict) -> str:
+    """The pre-registered interpretation (SCOPE.md, "Phase 3 holdout test")."""
+    if not r["mean_R"] > 0:
+        return "mean net R ≤ 0: **the negative finding is confirmed**"
+    if r["ci_lo"] > 0:
+        return (
+            "mean net R > 0 with a 95% CI excluding zero: **unexpected, reported but not acted on** "
+            "(at most it justifies a forward test on new live data)"
+        )
+    return "mean net R > 0 with a 95% CI including zero: **inconclusive, consistent with no edge**"
+
+
+@block("holdout_headline")
+def holdout_headline() -> str:
+    ho, wf = pl.read_csv(HO / "overall_metrics.csv"), _walk_forward_overall()
+    k = {
+        "label_set": "A",
+        "scenario": "taker",
+        "strategy": "lgbm_tuned",
+        "rung": 3,
+        "scorer": "finbert",
+        "seed": -1,
+    }
+    h, w = _one(ho, **k), _one(wf, **k)
+    beat = ho.filter(
+        (pl.col("seed") == -1)
+        & pl.col("strategy").is_in(["logreg", "lgbm", "lgbm_tuned"])
+        & (pl.col("mean_R") > 0)
+    )
+    beat_ci = beat.filter(pl.col("ci_lo") > 0)
+    rows = [
+        ("headline configuration", "label set A, taker costs, tuned LightGBM, rung 3 (FinBERT)"),
+        (
+            "walk-forward (2022-01-01 → 2026-04-26): mean net R [95% CI] (trades)",
+            f"{_ci(w)} ({w['trades']:,})",
+        ),
+        ("**holdout: mean net R [95% CI] (trades)**", f"**{_ci(h)}** ({h['trades']:,})"),
+        ("holdout: net / gross bps per trade", _bps(h)),
+        ("**pre-registered interpretation**", holdout_outcome(h)),
+        ("configurations with holdout mean net R > 0 (of 32)", f"{beat.height}"),
+        ("of those, with a 95% CI excluding zero", f"{beat_ci.height}"),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 
