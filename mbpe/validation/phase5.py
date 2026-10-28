@@ -1,8 +1,12 @@
-"""Phase 5 (SCOPE.md, "Phase 5 pre-registration"), step 1: labels only, before any model.
+"""Phase 5 (SCOPE.md, "Phase 5 pre-registration" and its amendment): longer-horizon evaluation. No holdout.
 
-Usage: uv run python -m mbpe.validation.phase5 step1
-Outputs: reports/phase5/{exit_reasons.csv, exit_reasons_by_year.csv, always_overall.csv, always_folds.csv}
+Usage: uv run python -m mbpe.validation.phase5 step1 | step2
+step 1 (labels only, before any model) -> reports/phase5/{exit_reasons.csv, exit_reasons_by_year.csv,
+  always_overall.csv, always_folds.csv}
+step 2 (models and controls) -> reports/phase5/{overall_metrics.csv, fold_metrics.csv, thresholds.csv,
+  long_share.csv, fold_long_share.csv, verdict.json}, data/features/phase5_trades.parquet
 
+Step 1:
 - exit-reason shares (tp / sl / expiry) per side, over the evaluation window (2021-01-01 to the holdout)
   and the test period (2022-01-01 to the holdout), plus per year, with the per-trade dispersion of net R
 - always-long / always-short over the Phase 3 test folds: one position at a time, no blackout (Phase 5 has
@@ -10,7 +14,9 @@ Outputs: reports/phase5/{exit_reasons.csv, exit_reasons_by_year.csv, always_over
 Decision times and exits stay before the holdout (guard in walk_forward).
 """
 
+import json
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -18,11 +24,16 @@ import polars as pl
 
 from mbpe.labels.triple_barrier import load_config, scenario_net_r
 from mbpe.validation.backtest import metrics, simulate
+from mbpe.validation.harness import RUNGS, load_dataset, run_label_set, summarize
 from mbpe.validation.walk_forward import guard_holdout, load_eval_config, make_folds, to_ms
 
 LABEL_CONFIG = Path("config/labels_P5.yaml")
 OUT = Path("reports/phase5")
 SCENARIOS = ("taker", "maker_entry_tp")
+TRADES = Path("data/features/phase5_trades.parquet")
+KLINES = Path("data/clean/binance/futures_klines_1m.parquet")
+N_PERMUTATIONS = 20
+HEADLINE = {"strategy": "lgbm", "rung": 3, "scenario": "taker"}
 
 
 def load_labels(cfg) -> pl.DataFrame:
@@ -143,5 +154,151 @@ def step1() -> None:
         print(overall)
 
 
+# ---------- step 2: models, controls, pass criterion (pre-registered + amendment) ----------
+
+
+def cfg_p5():
+    """Phase 5 protocol on top of the Phase 3 folds (SCOPE.md): 48 h embargo, no blackout, top-25% entry rule,
+    daily-ATR volatility filter, random long-only baseline (amendment)."""
+    return load_eval_config().model_copy(
+        update={
+            "embargo_hours": 48,
+            "blackout_events": (),
+            "entry_rule": "top_quantile",
+            "entry_quantile": 0.75,
+            "volfilter_column": "atr_1d_pct",
+            "random_long_only": True,
+        }
+    )
+
+
+def dataset(cfg) -> pl.DataFrame:
+    """Phase 3 features at the 4-hourly decision times + labels, plus atr_1d_pct for the vol-filter control:
+    the label's daily ATR divided by the futures close at t (the 1m candle closing at t). Not a model
+    input."""
+    df = load_dataset("P5", cfg)
+    atr = pl.read_parquet(load_config(LABEL_CONFIG).output).filter(pl.col("side") == "long")
+    close = pl.read_parquet(KLINES, columns=["open_time", "close"]).select(
+        decision_time=pl.col("open_time") + timedelta(minutes=1), close_t="close"
+    )
+    return (
+        df.join(atr.select("decision_time", "atr"), on="decision_time", how="left")
+        .join(close, on="decision_time", how="left")
+        .with_columns(atr_1d_pct=pl.col("atr") / pl.col("close_t"))
+        .drop("atr", "close_t")
+    )
+
+
+def run_step2(cfg, df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    tr, th = run_label_set("P5", cfg, df=df)  # rungs 1-3 x logreg/LightGBM, all baselines and controls
+    parts = [tr]
+    for perm in range(N_PERMUTATIONS):  # per rung, same seed: identical label permutations across rungs
+        for r in RUNGS:
+            sh, _ = run_label_set(
+                "P5", cfg, models=("lgbm",), rungs={r: RUNGS[r]}, shuffle_labels=True, df=df,
+                baselines=False, shuffle_seed=perm,
+            )  # fmt: skip
+            parts.append(sh.filter(pl.col("strategy") == "lgbm_shuffled").with_columns(seed=pl.lit(perm)))
+        print(f"permutation {perm + 1}/{N_PERMUTATIONS} done", flush=True)
+    return pl.concat(parts, how="diagonal_relaxed"), th
+
+
+def long_share(trades: pl.DataFrame) -> pl.DataFrame:
+    keys = ["scenario", "strategy", "rung", "model", "seed"]
+    return trades.group_by(keys).agg(trades=pl.len(), long_share=(pl.col("side") == 1).mean()).sort(keys)
+
+
+def fold_long_share(trades: pl.DataFrame, cfg) -> pl.DataFrame:
+    """Per test fold: the headline's trade count and long share (NaN without trades)."""
+    h = trades.filter(
+        (pl.col("strategy") == HEADLINE["strategy"])
+        & (pl.col("rung") == HEADLINE["rung"])
+        & (pl.col("scenario") == HEADLINE["scenario"])
+        & (pl.col("seed") == -1)
+    )
+    folds = pl.DataFrame(
+        {"fold": [f.index for f in make_folds(cfg)], "test_start": [f.test_start for f in make_folds(cfg)]}
+    )
+    agg = h.group_by("fold").agg(trades=pl.len(), long_share=(pl.col("side") == 1).mean())
+    return folds.join(agg, on="fold", how="left").with_columns(pl.col("trades").fill_null(0)).sort("fold")
+
+
+def verdict(ov: pl.DataFrame, ls: pl.DataFrame) -> dict:
+    def pick(strategy, rung=HEADLINE["rung"], scenario="taker", seed=-1):
+        return ov.filter(
+            (pl.col("strategy") == strategy)
+            & (pl.col("rung") == rung)
+            & (pl.col("scenario") == scenario)
+            & (pl.col("seed") == seed)
+        )
+
+    h = pick("lgbm").row(0, named=True)
+    perms = ov.filter(
+        (pl.col("strategy") == "lgbm_shuffled") & (pl.col("rung") == 3) & (pl.col("scenario") == "taker")
+    )["mean_R"]
+    always = pick("always_long", rung=0).row(0, named=True)
+    rlong = ov.filter((pl.col("strategy") == "randomlong_vs_lgbm") & (pl.col("rung") == 3)
+                      & (pl.col("scenario") == "taker"))["mean_R"]  # fmt: skip
+    step1 = pl.read_csv(OUT / "always_overall.csv").filter(
+        (pl.col("strategy") == "always_long") & (pl.col("scenario") == "taker")
+    )["mean_R"][0]
+    c1, c2, c3 = h["mean_R"] > 0, h["ci_lo"] > 0, bool((h["mean_R"] > perms).all())
+    passed = bool(c1 and c2 and c3)
+    beats_always = h["mean_R"] > always["mean_R"]
+    hl = ls.filter((pl.col("strategy") == "lgbm") & (pl.col("rung") == 3) & (pl.col("scenario") == "taker")
+                   & (pl.col("seed") == -1))["long_share"][0]  # fmt: skip
+    return {
+        "headline": "rung 3 LightGBM, taker, pooled over all test trades",
+        "trades": h["trades"],
+        "mean_R": h["mean_R"],
+        "ci_lo": h["ci_lo"],
+        "ci_hi": h["ci_hi"],
+        "c1_mean_R_gt_0": bool(c1),
+        "c2_ci_lo_gt_0": bool(c2),
+        "permutations": len(perms),
+        "perm_mean_R_min": perms.min(),
+        "perm_mean_R_median": perms.median(),
+        "perm_mean_R_max": perms.max(),
+        "perms_beaten": int((h["mean_R"] > perms).sum()),
+        "c3_beats_all_permutations": c3,
+        "pass": passed,
+        "always_long_mean_R": always["mean_R"],
+        "always_long_ci_lo": always["ci_lo"],
+        "always_long_ci_hi": always["ci_hi"],
+        "always_long_trades": always["trades"],
+        "always_long_matches_step1": bool(abs(always["mean_R"] - step1) < 1e-12),
+        "random_long_only_mean_R_median": rlong.median(),
+        "random_long_only_mean_R_p05": rlong.quantile(0.05),
+        "random_long_only_mean_R_p95": rlong.quantile(0.95),
+        "headline_long_share": hl,
+        "headline_beats_always_long": bool(beats_always),
+        "interpretation": (
+            "not applicable (criterion not passed)"
+            if not passed
+            else "predictive edge candidate (beats always-long)"
+            if beats_always
+            else "drift exposure, not predictive edge"
+        ),
+    }
+
+
+def step2() -> None:
+    cfg = cfg_p5()
+    df = dataset(cfg)
+    trades, th = run_step2(cfg, df)
+    pf, ov = summarize(trades, cfg)
+    ls = long_share(trades)
+    OUT.mkdir(parents=True, exist_ok=True)
+    pf.write_csv(OUT / "fold_metrics.csv")
+    ov.write_csv(OUT / "overall_metrics.csv")
+    th.write_csv(OUT / "thresholds.csv")
+    ls.write_csv(OUT / "long_share.csv")
+    fold_long_share(trades, cfg).write_csv(OUT / "fold_long_share.csv")
+    trades.write_parquet(TRADES)
+    v = verdict(ov, ls)
+    (OUT / "verdict.json").write_text(json.dumps(v, indent=1))
+    print(json.dumps(v, indent=1))
+
+
 if __name__ == "__main__":
-    {"step1": step1}[sys.argv[1]]()
+    {"step1": step1, "step2": step2}[sys.argv[1]]()

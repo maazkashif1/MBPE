@@ -41,6 +41,7 @@ from mbpe.validation.walk_forward import (
 
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 LABEL_SETS = {"A": Path("config/labels.yaml"), "B": Path("config/labels_B.yaml")}
+LABEL_CONFIGS = {**LABEL_SETS, "P5": Path("config/labels_P5.yaml")}  # P5: Phase 5 only, not in LABEL_SETS
 SCENARIOS = ("taker", "maker_entry_tp")
 RUNGS = {
     1: ("technical",),
@@ -76,7 +77,7 @@ def load_dataset(
     label_set: str, cfg: EvalConfig, allow_holdout: bool = False, news_path: Path | None = None
 ) -> pl.DataFrame:
     """One row per decision time: both sides' label columns + all features, inside the evaluation window."""
-    lcfg = load_config(LABEL_SETS[label_set])
+    lcfg = load_config(LABEL_CONFIGS[label_set])
     lab = pl.read_parquet(lcfg.output)
     lab = lab.with_columns(
         net_R_taker=pl.col("net_R"),
@@ -267,6 +268,7 @@ def run_label_set(
     scenarios=SCENARIOS,
     tuned_params: dict | None = None,
     baselines: bool = True,
+    shuffle_seed: int = 12345,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """All rungs x models for one label set -> (trades, thresholds); trades tagged by strategy/config.
 
@@ -275,9 +277,9 @@ def run_label_set(
     """
     df = load_dataset(label_set, cfg) if df is None else df
     decision, arr, weights, eligible = prepare_arrays(df, cfg)
-    atr = df["atr_1h_pct"].fill_null(np.nan).to_numpy()
+    atr = df[cfg.volfilter_column].fill_null(np.nan).to_numpy()
     trades, thresholds = [], []
-    rng_shuffle = np.random.default_rng(12345)
+    rng_shuffle = np.random.default_rng(shuffle_seed)
 
     def add(tr: pl.DataFrame, **tags):
         trades.append(tr.with_columns(*[pl.lit(v).alias(k) for k, v in tags.items()]))
@@ -329,14 +331,26 @@ def run_label_set(
                     params = tuned_params.get((rung, fold.index)) if tuned_params else None
                     p_val, p_test, info = fit_predict(kind, names, data, cfg, params)
                     v = m["val"]
-                    thr[side] = select_threshold(
-                        p_val,
-                        decision[v],
-                        arr[side]["exit"][v],
-                        {s: arr[side]["net"][s][v] for s in SCENARIOS},
-                        eligible[v],
-                        cfg,
-                    )
+                    shares = {}
+                    if cfg.entry_rule == "top_quantile":  # Phase 5: no search, same signals in every scenario
+                        pv = p_val[eligible[v]]
+                        thr_q = float(np.quantile(pv, cfg.entry_quantile)) if len(pv) else None
+                        thr[side] = {s: thr_q for s in SCENARIOS}
+                        shares = {
+                            "val_share": float((pv >= thr_q).mean()) if thr_q is not None else np.nan,
+                            "test_share": float((p_test[eligible[test]] >= thr_q).mean())
+                            if thr_q is not None and eligible[test].any()
+                            else np.nan,
+                        }
+                    else:
+                        thr[side] = select_threshold(
+                            p_val,
+                            decision[v],
+                            arr[side]["exit"][v],
+                            {s: arr[side]["net"][s][v] for s in SCENARIOS},
+                            eligible[v],
+                            cfg,
+                        )
                     probs[side] = p_test
                     for scen in scenarios:
                         thresholds.append(
@@ -349,6 +363,7 @@ def run_label_set(
                                 "threshold": thr[side][scen],
                                 "n_train": int(m["train"].sum()),
                                 "n_val": int(v.sum()),
+                                **shares,
                                 **info,
                             }
                         )
@@ -394,6 +409,26 @@ def run_label_set(
                             seed=seed,
                             **tag,
                         )
+                    if cfg.random_long_only:  # random long-only entries at the model's combined frequency
+                        for seed in range(cfg.random_seeds):
+                            r = np.random.default_rng([fold.index, rung, seed, MODELS.index(kind), 11])
+                            rl = (r.random(test.sum()) < q["long"] + q["short"]) & eligible[test]
+                            idx, sd = simulate(
+                                dt,
+                                rl,
+                                np.zeros(test.sum(), bool),
+                                arr["long"]["exit"][test],
+                                arr["short"]["exit"][test],
+                            )
+                            add(
+                                trades_frame(np.flatnonzero(test)[idx], sd, decision, arr, scen),
+                                strategy=f"randomlong_vs_{strat}",
+                                rung=rung,
+                                model=kind,
+                                scenario=scen,
+                                seed=seed,
+                                **tag,
+                            )
                     # volatility filter: random direction in high-ATR hours, at the model's signal frequency;
                     # the ATR cutoff comes from the validation slice
                     qtot = q["long"] + q["short"]

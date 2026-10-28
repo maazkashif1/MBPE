@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import polars as pl
@@ -47,7 +48,12 @@ class EvalConfig(BaseModel):
     logreg_C: float
     news_features: Path = Path("data/features/news.parquet")  # which news config the harness evaluates
     phase4_features: Path | None = None  # Phase 4: NFP / order-book features joined when set
-    blackout_events: tuple[str, ...] = ("CPI", "FOMC")  # Phase 4 rung 4b adds "NFP"
+    blackout_events: tuple[str, ...] = ("CPI", "FOMC")  # Phase 4 rung 4b adds "NFP"; Phase 5: none
+    # Phase 5 (SCOPE.md): entry when the calibrated score >= this quantile of the side's validation scores
+    entry_rule: Literal["search", "top_quantile"] = "search"
+    entry_quantile: float = 0.75
+    volfilter_column: str = "atr_1h_pct"  # volatility measure of the vol-filter control (Phase 5: daily ATR)
+    random_long_only: bool = False  # Phase 5 amendment: random long-only baseline at the model's frequency
 
 
 def load_eval_config(path: Path = EVAL_CONFIG) -> EvalConfig:
