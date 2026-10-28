@@ -35,7 +35,6 @@ from mbpe.validation.walk_forward import (
     load_eval_config,
     make_folds,
     split,
-    to_ms,
     uniqueness,
 )
 
@@ -415,11 +414,14 @@ def run_label_set(
 KEYS = ["label_set", "scenario", "strategy", "rung", "model"]
 
 
-def summarize(trades: pl.DataFrame, cfg: EvalConfig) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """(per-fold metrics, overall metrics) for every strategy; random baselines per seed."""
-    folds = {f.index: f for f in make_folds(cfg)}
+def summarize(trades: pl.DataFrame, cfg: EvalConfig, folds=None) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(per-fold metrics, overall metrics) for every strategy; random baselines per seed.
+
+    `folds` defaults to the walk-forward folds; the overall period spans them.
+    """
+    folds = {f.index: f for f in folds or make_folds(cfg)}
     per_fold, overall = [], []
-    start, end = min(f.test_start for f in folds.values()), to_ms(cfg.holdout_start)
+    start, end = min(f.test_start for f in folds.values()), max(f.test_end for f in folds.values())
     for key, g in trades.group_by(KEYS + ["seed"], maintain_order=True):
         k = dict(zip(KEYS + ["seed"], key, strict=True))
         ci = k["seed"] == -1  # random-baseline seeds are summarized as a distribution, no per-seed CI
