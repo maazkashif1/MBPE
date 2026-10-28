@@ -1,0 +1,3 @@
+file,rows_before,rows_after,columns_before,columns_added,columns_removed,previous_columns_identical
+market,53904,53904,53,5,0,true
+news,53942,53942,47,6,0,true

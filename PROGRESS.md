@@ -1776,3 +1776,74 @@ The top-25% rule is "score ≥ the 75th percentile of the side's calibrated vali
   - `LABEL_CONFIGS["P5"]`, kept out of `LABEL_SETS`, so the Phase 3 loops are unchanged.
 - **Daily-ATR control column:** `mbpe/validation/phase5.py` adds `atr_1d_pct` (the label's daily ATR ÷ the futures close at t). It's used by the volatility-filter control only, not as a model feature.
 - **Phase 3 is unaffected:** the Phase 3 validation tests pass unchanged. Re-running Phase 3's rung 3 LightGBM (label set A) and its baselines through the modified harness reproduces the committed Phase 3 step 2 numbers exactly. Always-long here also reproduces step 1 exactly (table 2).
+
+## Phase 6 Workstream A: data streams (2026-10-28, no model)
+
+Pre-registered in `SCOPE.md` ("Phase 6: delivery of the full scope doc", 5777ed4). Feature definitions are in "Phase 6 Workstream A: feature definitions", fixed before any Phase 6 model. No model was trained in this step, and the holdout stays closed.
+
+### New historical data: mark price and premium index
+`uv run python -m mbpe.ingest 2020-09-01 --only mark_price_1m` (and `premium_index_1m`) → `data/clean/binance/`. Binance archive, 1m, SHA-256 checked, with the premium index allowed to be negative.
+
+<!-- generated:phase6_a_scan -->
+| dataset | raw files (SHA-256 checked) | 1m rows | first → last | gaps | missing rows | longest gap |
+|---|---|---|---|---|---|---|
+| mark_price_1m | 2,198 | 3,165,094 | 2020-09-01 → 2026-10-27 | 8 | 72,026 | 48,961 min from 2021-01-17 23:59 |
+| premium_index_1m | 2,248 | 3,236,948 | 2020-09-01 → 2026-10-27 | 9 | 172 | 83 min from 2020-12-01 22:39 |
+<!-- /generated:phase6_a_scan -->
+
+- **The mark-price archive is missing whole days in the first half of 2021** (absent files, not short ones). On those days `basis_mark_bps` is NaN, never zero or forward-filled.
+- **The premium index is nearly complete:** only short gaps.
+
+### New features
+- **`mark_premium`** (market registry): basis to mark, last / 1h / 8h premium, and a 7-day premium z-score.
+- **`regulatory`** (news registry): regulatory and major-announcement headline clusters.
+- **Rebuild:** `uv run python -m mbpe.features.market` and `uv run python -m mbpe.features.news`, then `uv run python -m mbpe.features.phase6_report <old market> <old news>` → `reports/phase6/`.
+
+Missing share in the evaluation window:
+
+<!-- generated:phase6_a_missing -->
+| feature | group | hours (2021-01-01 → holdout) | missing |
+|---|---|---|---|
+| basis_mark_bps | mark_premium | 46,584 | 2.58% |
+| premium_last_bps | mark_premium | 46,584 | 0.00% |
+| premium_mean_1h_bps | mark_premium | 46,584 | 0.00% |
+| premium_mean_8h_bps | mark_premium | 46,584 | 0.00% |
+| premium_z_7d | mark_premium | 46,584 | 0.00% |
+| reg_new_clusters_1h | regulatory | 46,584 | 1.65% |
+| reg_new_clusters_4h | regulatory | 46,584 | 1.49% |
+| reg_new_clusters_24h | regulatory | 46,584 | 1.72% |
+| major_new_clusters_4h | regulatory | 46,584 | 1.49% |
+| major_new_clusters_24h | regulatory | 46,584 | 1.72% |
+| reg_share_24h | regulatory | 46,584 | 1.72% |
+<!-- /generated:phase6_a_missing -->
+
+**Rebuild check:** every feature column from Phases 3–5 is unchanged after adding the new ones.
+
+<!-- generated:phase6_a_identity -->
+| feature file | rows before / after | columns before | added | removed | earlier columns byte-identical |
+|---|---|---|---|---|---|
+| market | 53,904 / 53,904 | 53 | 5 | 0 | **yes** |
+| news | 53,942 / 53,942 | 47 | 6 | 0 | **yes** |
+<!-- /generated:phase6_a_identity -->
+
+### Forward-only collectors (built and tested; not installed)
+- **`mbpe/sources/rss_live.py`:** CoinDesk, Cointelegraph, The Block, Decrypt and Bitcoin Magazine headlines every 15 minutes, stored with our own first-fetch time as availability.
+  - A single live run reached all five feeds; it wrote to scratch, not `data/`.
+  - Feeds that scrolled past the previous run are flagged, and one broken feed doesn't stop the others.
+- **`mbpe/sources/liquidations_live.py`:** BTCUSDT liquidations from Binance's `forceOrder` WebSocket.
+  - **The legacy `/ws/` path accepts connections but delivers nothing** (checked live; a busy trade stream sent nothing there either), so the collector uses the `/market/` combined-stream path.
+  - It also subscribes to mark prices (every 3 s), so coverage counts only while data is actually flowing. A silent connection is dropped and reopened, and never counts as covered.
+  - The parser was checked on a real event captured from the all-symbols stream. A 2.5-minute live run on BTCUSDT recorded coverage, with no liquidations in that window.
+  - Per Binance's documentation, the stream pushes at most one liquidation per symbol per second, so it is a lower bound.
+- **Deploy examples:** `deploy/rss-live.cron`, `deploy/mbpe-liquidations.service` (systemd) and `deploy/com.mbpe.liquidations.plist` (macOS launchd). They are **not installed**: running them persistently changes system configuration and needs your go-ahead, and on a laptop, sleep creates coverage gaps.
+
+### Tests
+- `tests/test_features.py`:
+  - the synthetic fixture now has mark-price and premium-index series with outages and scattered missing minutes, so the truncation leakage tests cover the new features;
+  - a value test checks the basis, the premium means and the 80% coverage edge;
+  - the real-data leakage slice (Mar–May 2021) overlaps real mark-price outages.
+- `tests/test_news_features.py`:
+  - synthetic headlines now include regulatory and major-announcement titles, so the leakage and outage tests cover the new group;
+  - the keyword patterns are checked against true and false examples ("Bill Gates", "fine-tuned", "sec-ond", "Hackathon");
+  - a test confirms each new cluster is counted once.
+- `tests/test_rss_live.py` (6) and `tests/test_liquidations_live.py` (6): offline, with fake feeds and a fake WebSocket. They cover silent connections, server close, reconnect with backoff, heartbeats under load, and a crash with no end record.

@@ -1,0 +1,12 @@
+feature,group,hours,missing_share
+basis_mark_bps,mark_premium,46584,0.02575991756826378
+premium_last_bps,mark_premium,46584,0.00002146659797355315
+premium_mean_1h_bps,mark_premium,46584,0.0000429331959471063
+premium_mean_8h_bps,mark_premium,46584,0.0
+premium_z_7d,mark_premium,46584,0.0000429331959471063
+reg_new_clusters_1h,regulatory,46584,0.016507813841662375
+reg_new_clusters_4h,regulatory,46584,0.014897818993645886
+reg_new_clusters_24h,regulatory,46584,0.017151811780868966
+major_new_clusters_4h,regulatory,46584,0.014897818993645886
+major_new_clusters_24h,regulatory,46584,0.017151811780868966
+reg_share_24h,regulatory,46584,0.017151811780868966

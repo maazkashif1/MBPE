@@ -733,6 +733,53 @@ def phase5_entry_shares() -> str:
     return "\n".join(out) + "\n"
 
 
+# ---------- Phase 6 ----------
+
+P6 = R / "phase6"
+
+
+@block("phase6_a_scan")
+def phase6_a_scan() -> str:
+    d = pl.read_csv(P6 / "data_scan.csv")
+    out = [
+        "| dataset | raw files (SHA-256 checked) | 1m rows | first → last | gaps | missing rows "
+        "| longest gap |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for r in d.iter_rows(named=True):
+        out.append(
+            f"| {r['dataset']} | {r['raw_files']:,} | {r['rows']:,} | {r['first'][:10]} → {r['last'][:10]} "
+            f"| {r['gaps']} | {r['missing_rows']:,} "
+            f"| {r['longest_gap_min']:,} min from {r['longest_gap_start'][:16]} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_a_missing")
+def phase6_a_missing() -> str:
+    d = pl.read_csv(P6 / "feature_missing.csv")
+    out = ["| feature | group | hours (2021-01-01 → holdout) | missing |", "|---|---|---|---|"]
+    for r in d.iter_rows(named=True):
+        out.append(f"| {r['feature']} | {r['group']} | {r['hours']:,} | {r['missing_share']:.2%} |")
+    return "\n".join(out) + "\n"
+
+
+@block("phase6_a_identity")
+def phase6_a_identity() -> str:
+    d = pl.read_csv(P6 / "rebuild_identity.csv")
+    out = [
+        "| feature file | rows before / after | columns before | added | removed "
+        "| earlier columns byte-identical |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in d.iter_rows(named=True):
+        out.append(
+            f"| {r['file']} | {r['rows_before']:,} / {r['rows_after']:,} | {r['columns_before']} "
+            f"| {r['columns_added']} | {r['columns_removed']} | {_yes(r['previous_columns_identical'])} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 
