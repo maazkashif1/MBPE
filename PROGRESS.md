@@ -1634,3 +1634,145 @@ By year:
 - **Always-short loses money in both cost scenarios.**
 
 **Next:** stop for review before any model is trained (step 2 = the pre-registered models, rungs 1–3, controls and pass criterion).
+
+## Phase 5 step 2: models, controls and the pass criterion (2026-10-28, no holdout)
+
+Run exactly as pre-registered (`SCOPE.md`, "Phase 5 pre-registration"), plus the reporting amendment committed before any Phase 5 model (1a92e12).
+- **Run:** `uv run python -m mbpe.validation.phase5 step2` → `reports/phase5/` (`verdict.json`, `overall_metrics.csv`, `fold_metrics.csv`, `thresholds.csv`, `long_share.csv`, `fold_long_share.csv`).
+- **Protocol:** Phase 3 folds, 48 h embargo, no blackout, top-25% validation-score entry rule, no tuning.
+- **Controls:**
+  - 20 shuffled-label runs per rung, with identical permutations across rungs;
+  - random, volatility-filter (daily ATR) and random long-only baselines (20 seeds each);
+  - always-long and always-short.
+- The holdout access log is unchanged by this run.
+
+### 1. Verdict
+
+<!-- generated:phase5_verdict -->
+| | |
+|---|---|
+| headline | rung 3 LightGBM, taker, pooled over all test trades: 1,209 trades |
+| 1. mean net R > 0 | -0.059: no |
+| 2. 95% CI lower bound > 0 | [-0.093, -0.022]: no |
+| 3. beats all 20 shuffled-label runs (p < 0.05) | beats 5 of 20 (their mean net R: min -0.081, median -0.037, max -0.006): no |
+| **historical pass criterion** | **FAIL** |
+<!-- /generated:phase5_verdict -->
+
+**The historical pass criterion fails on all three conditions,** so no forward test is triggered. The Phase 3 finding stands at the longer horizon too.
+
+### 2. Interpretation rule (amendment)
+
+<!-- generated:phase5_interpretation -->
+| | |
+|---|---|
+| headline mean net R (taker) [95% CI] | -0.059 [-0.093, -0.022] |
+| always-long mean net R (taker) [95% CI] | -0.023 [-0.057, +0.015] (1,460 trades; identical to step 1: **yes**) |
+| random long-only at the headline's frequency, 20 seeds: median [5%, 95%] | -0.026 [-0.035, -0.019] |
+| share of the headline's trades that are long | 46.7% |
+| headline mean net R exceeds always-long's | no |
+| **interpretation rule outcome** | **not applicable (criterion not passed)** |
+<!-- /generated:phase5_interpretation -->
+
+- **The rule doesn't apply,** since the criterion wasn't passed.
+- For the record, the headline does worse than always-long and than random long-only entries at its own frequency, and it trades long and short in similar proportions. **So there is no drift exposure to explain away; it simply has no edge.**
+
+### 3. All rungs and models (long share = share of a configuration's trades that are long)
+
+<!-- generated:phase5_configs -->
+| scenario | model | rung | trades | long share | mean net R [95% CI] | net / gross bps | random: net R (median) | vol filter: net R (median) | random long-only: net R (median) | folds won vs random / vol filter / random long-only |
+|---|---|---|---|---|---|---|---|---|---|---|
+| taker | lgbm | 1 | 1,200 | 50% | -0.028 [-0.065, +0.012] | -14.8 / -0.8 | -0.048 | -0.042 | -0.025 | 11/18 / 10/18 / 10/18 |
+| taker | lgbm | 2 | 1,244 | 59% | -0.016 [-0.050, +0.020] | -6.4 / +7.7 | -0.055 | -0.039 | -0.023 | 13/18 / 10/18 / 12/18 |
+| taker | lgbm | 3 | 1,209 | 47% | -0.059 [-0.093, -0.022] | -21.1 / -7.5 | -0.073 | -0.041 | -0.026 | 9/18 / 10/18 / 6/18 |
+| taker | logreg | 1 | 1,297 | 57% | -0.014 [-0.050, +0.023] | -5.8 / +8.3 | -0.044 | -0.029 | -0.022 | 11/18 / 10/18 / 10/18 |
+| taker | logreg | 2 | 1,295 | 51% | -0.006 [-0.042, +0.033] | -0.8 / +12.9 | -0.054 | -0.032 | -0.023 | 10/18 / 10/18 / 10/18 |
+| taker | logreg | 3 | 1,334 | 48% | -0.012 [-0.044, +0.023] | -3.1 / +10.7 | -0.043 | -0.040 | -0.020 | 9/18 / 12/18 / 10/18 |
+| maker_entry_tp | lgbm | 1 | 1,200 | 50% | -0.014 [-0.051, +0.026] | -9.7 / -0.8 | -0.034 | -0.029 | -0.011 | 11/18 / 10/18 / 10/18 |
+| maker_entry_tp | lgbm | 2 | 1,244 | 59% | -0.002 [-0.036, +0.034] | -1.2 / +7.7 | -0.042 | -0.026 | -0.009 | 13/18 / 10/18 / 12/18 |
+| maker_entry_tp | lgbm | 3 | 1,209 | 47% | -0.045 [-0.079, -0.008] | -16.0 / -7.5 | -0.059 | -0.029 | -0.012 | 9/18 / 10/18 / 6/18 |
+| maker_entry_tp | logreg | 1 | 1,297 | 57% | -0.000 [-0.036, +0.037] | -0.7 / +8.3 | -0.030 | -0.017 | -0.008 | 11/18 / 10/18 / 10/18 |
+| maker_entry_tp | logreg | 2 | 1,295 | 51% | +0.009 [-0.028, +0.047] | +4.3 / +12.9 | -0.039 | -0.020 | -0.009 | 10/18 / 10/18 / 10/18 |
+| maker_entry_tp | logreg | 3 | 1,334 | 48% | +0.002 [-0.030, +0.037] | +2.1 / +10.7 | -0.029 | -0.027 | -0.007 | 9/18 / 12/18 / 10/18 |
+<!-- /generated:phase5_configs -->
+
+- **No configuration has a 95% CI lower bound above zero,** in either cost scenario.
+- **Rung 3 (with news) is the weakest LightGBM rung.** Adding news doesn't help at this horizon either.
+- **Some logistic-regression configurations are close to break-even,** with positive point estimates in the maker scenario. They show a few bps of gross edge and wide CIs. They aren't the pre-registered decision configuration, and selecting one after the fact would be exactly the kind of post-hoc choice the protocol rules out.
+
+### 4. Controls: shuffled-label permutations and always-trade baselines
+
+<!-- generated:phase5_controls -->
+| scenario | rung | LightGBM: mean net R | shuffled-label runs: min / median / max mean net R | runs beaten | shuffled: median gross bps |
+|---|---|---|---|---|---|
+| taker | 1 | -0.028 | -0.090 / -0.035 / +0.007 | 13/20 | +0.6 |
+| taker | 2 | -0.016 | -0.085 / -0.039 / -0.003 | 19/20 | -1.5 |
+| taker | 3 | -0.059 | -0.081 / -0.037 / -0.006 | 5/20 | -0.8 |
+| maker_entry_tp | 1 | -0.014 | -0.076 / -0.021 / +0.021 | 13/20 | +0.6 |
+| maker_entry_tp | 2 | -0.002 | -0.071 / -0.025 / +0.011 | 19/20 | -1.5 |
+| maker_entry_tp | 3 | -0.045 | -0.067 / -0.023 / +0.007 | 5/20 | -0.8 |
+
+| baseline | scenario | trades | mean net R [95% CI] | net / gross bps |
+|---|---|---|---|---|
+| always_long | taker | 1,460 | -0.023 [-0.057, +0.015] | -10.3 / +5.4 |
+| always_long | maker_entry_tp | 1,460 | -0.009 [-0.043, +0.029] | -5.2 / +5.4 |
+| always_short | taker | 1,475 | -0.055 [-0.092, -0.020] | -18.1 / -5.8 |
+| always_short | maker_entry_tp | 1,475 | -0.041 [-0.078, -0.006] | -13.0 / -5.8 |
+<!-- /generated:phase5_controls -->
+
+- **The 20 shuffled runs spread widely** (min to max), wider than most gaps between configurations. That's why the pass criterion requires beating all of them rather than one.
+- Some rungs beat most permutations, but none beats all 20, and all have negative mean net R.
+
+### 5. Per fold (taker; rung 3 LightGBM next to its controls)
+
+<!-- generated:phase5_folds -->
+| fold | start | rung 3 LightGBM: mean net R (trades) | long share | always-long | shuffled (median of 20) | random (median) | vol filter (median) | random long-only (median) |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 2022-01-01 | +0.08 (35) | 100% | -0.02 (83) | -0.00 | -0.04 | -0.03 | -0.02 |
+| 1 | 2022-04-01 | -0.05 (77) | 91% | -0.17 (85) | +0.02 | -0.15 | -0.15 | -0.17 |
+| 2 | 2022-07-01 | +0.02 (72) | 11% | -0.07 (83) | -0.04 | -0.03 | -0.02 | -0.07 |
+| 3 | 2022-10-01 | -0.09 (43) | 30% | -0.07 (84) | -0.05 | -0.03 | +0.01 | -0.07 |
+| 4 | 2023-01-01 | -0.07 (76) | 51% | +0.10 (88) | +0.05 | -0.04 | +0.04 | +0.12 |
+| 5 | 2023-04-01 | -0.10 (74) | 0% | -0.03 (84) | -0.01 | -0.06 | -0.06 | -0.03 |
+| 6 | 2023-07-01 | -0.03 (67) | 45% | -0.12 (85) | -0.07 | -0.03 | -0.04 | -0.10 |
+| 7 | 2023-10-01 | -0.02 (83) | 28% | +0.12 (84) | -0.08 | -0.15 | -0.10 | +0.12 |
+| 8 | 2024-01-01 | +0.03 (80) | 35% | +0.06 (87) | -0.01 | -0.11 | -0.03 | +0.06 |
+| 9 | 2024-04-01 | +0.06 (59) | 76% | -0.09 (85) | -0.06 | -0.07 | -0.05 | -0.07 |
+| 10 | 2024-07-01 | -0.14 (81) | 69% | -0.01 (86) | -0.07 | -0.05 | -0.01 | -0.06 |
+| 11 | 2024-10-01 | -0.17 (80) | 15% | +0.06 (83) | -0.01 | -0.13 | -0.05 | +0.06 |
+| 12 | 2025-01-01 | -0.09 (78) | 47% | -0.05 (87) | -0.03 | -0.06 | -0.01 | -0.05 |
+| 13 | 2025-04-01 | +0.01 (69) | 39% | +0.03 (83) | -0.08 | -0.09 | -0.08 | +0.04 |
+| 14 | 2025-07-01 | -0.08 (72) | 40% | +0.01 (84) | -0.05 | -0.06 | -0.15 | -0.03 |
+| 15 | 2025-10-01 | -0.07 (66) | 79% | -0.09 (85) | -0.03 | -0.12 | -0.08 | -0.13 |
+| 16 | 2026-01-01 | -0.13 (78) | 69% | -0.07 (83) | -0.06 | -0.04 | -0.04 | -0.08 |
+| 17 | 2026-04-01 | -0.37 (19) | 37% | +0.07 (21) | -0.05 | -0.07 | -0.08 | +0.07 |
+<!-- /generated:phase5_folds -->
+
+### 6. Entry rule: realized shares
+
+The top-25% rule is "score ≥ the 75th percentile of the side's calibrated validation scores". Isotonic calibration produces tied scores, so the share actually selected is often well above 25% (as pre-registered: reported, not corrected).
+- In a few fold-sides the calibrated scores are constant, and the rule selects every decision (last column). Fold 0's all-long trading by the headline is one such case.
+
+<!-- generated:phase5_entry_shares -->
+| model | rung | side | validation share selected: median [min, max] | test share selected: median | fold-sides selecting ≥ 99% of validation (constant scores) |
+|---|---|---|---|---|---|
+| lgbm | 1 | long | 39% [27%, 100%] | 40% | 1/18 |
+| lgbm | 1 | short | 57% [26%, 96%] | 54% | 0/18 |
+| lgbm | 2 | long | 38% [25%, 100%] | 43% | 3/18 |
+| lgbm | 2 | short | 43% [26%, 81%] | 40% | 0/18 |
+| lgbm | 3 | long | 38% [27%, 100%] | 38% | 1/18 |
+| lgbm | 3 | short | 44% [25%, 100%] | 45% | 1/18 |
+| logreg | 1 | long | 45% [26%, 100%] | 47% | 2/18 |
+| logreg | 1 | short | 46% [26%, 100%] | 42% | 1/18 |
+| logreg | 2 | long | 44% [25%, 100%] | 53% | 1/18 |
+| logreg | 2 | short | 54% [25%, 100%] | 45% | 1/18 |
+| logreg | 3 | long | 45% [26%, 97%] | 50% | 0/18 |
+| logreg | 3 | short | 53% [25%, 93%] | 60% | 0/18 |
+<!-- /generated:phase5_entry_shares -->
+
+### Code
+- **Harness additions, all defaulting to Phase 3 behaviour:**
+  - `entry_rule` / `entry_quantile` (top-quantile entry, same signals in both cost scenarios);
+  - `volfilter_column`, `random_long_only`, and `shuffle_seed` (for the 20 permutations);
+  - `LABEL_CONFIGS["P5"]`, kept out of `LABEL_SETS`, so the Phase 3 loops are unchanged.
+- **Daily-ATR control column:** `mbpe/validation/phase5.py` adds `atr_1d_pct` (the label's daily ATR ÷ the futures close at t). It's used by the volatility-filter control only, not as a model feature.
+- **Phase 3 is unaffected:** the Phase 3 validation tests pass unchanged. Re-running Phase 3's rung 3 LightGBM (label set A) and its baselines through the modified harness reproduces the committed Phase 3 step 2 numbers exactly. Always-long here also reproduces step 1 exactly (table 2).

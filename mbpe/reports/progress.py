@@ -550,6 +550,189 @@ def phase5_always() -> str:
     return "\n".join(out) + "\n"
 
 
+def _p5_verdict() -> dict:
+    return json.loads((P5 / "verdict.json").read_text())
+
+
+def _yes(b: bool) -> str:
+    return "**yes**" if b else "no"
+
+
+@block("phase5_verdict")
+def phase5_verdict() -> str:
+    v = _p5_verdict()
+    rows = [
+        ("headline", f"{v['headline']}: {v['trades']:,} trades"),
+        ("1. mean net R > 0", f"{fmt(v['mean_R'])}: {_yes(v['c1_mean_R_gt_0'])}"),
+        (
+            "2. 95% CI lower bound > 0",
+            f"[{fmt(v['ci_lo'])}, {fmt(v['ci_hi'])}]: {_yes(v['c2_ci_lo_gt_0'])}",
+        ),
+        (
+            f"3. beats all {v['permutations']} shuffled-label runs (p < 0.05)",
+            f"beats {v['perms_beaten']} of {v['permutations']} "
+            f"(their mean net R: min {fmt(v['perm_mean_R_min'])}, "
+            f"median {fmt(v['perm_mean_R_median'])}, max {fmt(v['perm_mean_R_max'])}): "
+            f"{_yes(v['c3_beats_all_permutations'])}",
+        ),
+        ("**historical pass criterion**", "**PASS**" if v["pass"] else "**FAIL**"),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+@block("phase5_interpretation")
+def phase5_interpretation() -> str:
+    v = _p5_verdict()
+    rows = [
+        (
+            "headline mean net R (taker) [95% CI]",
+            f"{fmt(v['mean_R'])} [{fmt(v['ci_lo'])}, {fmt(v['ci_hi'])}]",
+        ),
+        (
+            "always-long mean net R (taker) [95% CI]",
+            f"{fmt(v['always_long_mean_R'])} [{fmt(v['always_long_ci_lo'])}, {fmt(v['always_long_ci_hi'])}] "
+            f"({v['always_long_trades']:,} trades; "
+            f"identical to step 1: {_yes(v['always_long_matches_step1'])})",
+        ),
+        (
+            "random long-only at the headline's frequency, 20 seeds: median [5%, 95%]",
+            f"{fmt(v['random_long_only_mean_R_median'])} [{fmt(v['random_long_only_mean_R_p05'])}, "
+            f"{fmt(v['random_long_only_mean_R_p95'])}]",
+        ),
+        ("share of the headline's trades that are long", f"{v['headline_long_share']:.1%}"),
+        ("headline mean net R exceeds always-long's", _yes(v["headline_beats_always_long"])),
+        ("**interpretation rule outcome**", f"**{v['interpretation']}**"),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+def _p5_long_share(ls: pl.DataFrame, **k) -> str:
+    x = ls.filter(*[pl.col(c) == v for c, v in k.items()])
+    return f"{x['long_share'][0]:.0%}" if x.height else "–"
+
+
+@block("phase5_configs")
+def phase5_configs() -> str:
+    ov, pf = pl.read_csv(P5 / "overall_metrics.csv"), pl.read_csv(P5 / "fold_metrics.csv")
+    ls = pl.read_csv(P5 / "long_share.csv")
+    m = ov.filter((pl.col("seed") == -1) & pl.col("strategy").is_in(["logreg", "lgbm"]))
+    out = [
+        "| scenario | model | rung | trades | long share | mean net R [95% CI] | net / gross bps "
+        "| random: net R (median) | vol filter: net R (median) | random long-only: net R (median) "
+        "| folds won vs random / vol filter / random long-only |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in m.sort("scenario", "strategy", "rung", descending=[True, False, False]).iter_rows(named=True):
+        key = {"scenario": r["scenario"], "rung": r["rung"]}
+        base, won = [], []
+        mf = pf.filter(
+            *[pl.col(c) == v for c, v in key.items()],
+            pl.col("strategy") == r["strategy"],
+            pl.col("seed") == -1,
+            pl.col("trades") > 0,
+        )
+        for b in ("random", "volfilter", "randomlong"):
+            sel = [pl.col(c) == v for c, v in key.items()] + [pl.col("strategy") == f"{b}_vs_{r['strategy']}"]
+            base.append(fmt(ov.filter(*sel)["mean_R"].median()))
+            bf = pf.filter(*sel).group_by("fold").agg(med=pl.col("mean_R").median())
+            j = mf.join(bf, on="fold")
+            won.append(f"{(j['mean_R'] > j['med']).sum()}/{pf['fold'].n_unique()}")
+        lshare = _p5_long_share(ls, scenario=r["scenario"], strategy=r["strategy"], rung=r["rung"], seed=-1)
+        out.append(
+            f"| {r['scenario']} | {r['strategy']} | {r['rung']} | {r['trades']:,} | {lshare} | {_ci(r)} "
+            f"| {_bps(r)} | {base[0]} | {base[1]} | {base[2]} | {' / '.join(won)} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase5_controls")
+def phase5_controls() -> str:
+    ov = pl.read_csv(P5 / "overall_metrics.csv")
+    out = [
+        "| scenario | rung | LightGBM: mean net R | shuffled-label runs: min / median / max mean net R "
+        "| runs beaten | shuffled: median gross bps |",
+        "|---|---|---|---|---|---|",
+    ]
+    for scen in ("taker", "maker_entry_tp"):
+        for rung in (1, 2, 3):
+            k = (pl.col("scenario") == scen) & (pl.col("rung") == rung)
+            mdl = ov.filter(k & (pl.col("strategy") == "lgbm") & (pl.col("seed") == -1))["mean_R"][0]
+            sh = ov.filter(k & (pl.col("strategy") == "lgbm_shuffled"))
+            out.append(
+                f"| {scen} | {rung} | {fmt(mdl)} "
+                f"| {fmt(sh['mean_R'].min())} / {fmt(sh['mean_R'].median())} / "
+                f"{fmt(sh['mean_R'].max())} | {(mdl > sh['mean_R']).sum()}/{sh.height} "
+                f"| {fmt(sh['gross_bps_per_trade'].median(), 1)} |"
+            )
+    al = ov.filter(pl.col("strategy").str.starts_with("always"))
+    out += [
+        "",
+        "| baseline | scenario | trades | mean net R [95% CI] | net / gross bps |",
+        "|---|---|---|---|---|",
+    ]
+    for r in al.sort("strategy", "scenario", descending=[False, True]).iter_rows(named=True):
+        out.append(f"| {r['strategy']} | {r['scenario']} | {r['trades']:,} | {_ci(r)} | {_bps(r)} |")
+    return "\n".join(out) + "\n"
+
+
+@block("phase5_folds")
+def phase5_folds() -> str:
+    """Per fold, taker: the headline (rung 3 LightGBM) next to its controls."""
+    pf = pl.read_csv(P5 / "fold_metrics.csv").filter(pl.col("scenario") == "taker")
+    trades = pl.read_csv(P5 / "fold_long_share.csv")
+
+    def cell(df):
+        return (
+            "·" if not df.height or not df["trades"][0] else f"{fmt(df['mean_R'][0], 2)} ({df['trades'][0]})"
+        )
+
+    def med(df):
+        return fmt(df["mean_R"].median(), 2) if df.height else "–"
+
+    out = [
+        "| fold | start | rung 3 LightGBM: mean net R (trades) | long share | always-long "
+        "| shuffled (median of 20) "
+        "| random (median) | vol filter (median) | random long-only (median) |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for f in sorted(pf["fold"].unique().to_list()):
+        x = pf.filter(pl.col("fold") == f)
+        h = x.filter((pl.col("strategy") == "lgbm") & (pl.col("rung") == 3) & (pl.col("seed") == -1))
+        al = x.filter(pl.col("strategy") == "always_long")
+        r3 = x.filter(pl.col("rung") == 3)
+        lsh = trades.filter(pl.col("fold") == f)["long_share"]
+        start = datetime.fromtimestamp(trades.filter(pl.col("fold") == f)["test_start"][0] / 1000, UTC).date()
+        out.append(
+            f"| {f} | {start} | {cell(h)} | {f'{lsh[0]:.0%}' if lsh.len() and lsh[0] == lsh[0] else '·'} "
+            f"| {cell(al)} | {med(r3.filter(pl.col('strategy') == 'lgbm_shuffled'))} "
+            f"| {med(r3.filter(pl.col('strategy') == 'random_vs_lgbm'))} "
+            f"| {med(r3.filter(pl.col('strategy') == 'volfilter_vs_lgbm'))} "
+            f"| {med(r3.filter(pl.col('strategy') == 'randomlong_vs_lgbm'))} |"
+        )
+    return "\n".join(out) + "\n"
+
+
+@block("phase5_entry_shares")
+def phase5_entry_shares() -> str:
+    """Realized shares selected by the top-25% entry rule (ties from isotonic calibration can raise them)."""
+    th = pl.read_csv(P5 / "thresholds.csv").filter(pl.col("scenario") == "taker")
+    out = [
+        "| model | rung | side | validation share selected: median [min, max] | test share selected: median "
+        "| fold-sides selecting ≥ 99% of validation (constant scores) |",
+        "|---|---|---|---|---|---|",
+    ]
+    for (model, rung, side), g in th.sort("model", "rung", "side").group_by(
+        "model", "rung", "side", maintain_order=True
+    ):
+        v, t = g["val_share"], g["test_share"]
+        out.append(
+            f"| {model} | {rung} | {side} | {v.median():.0%} [{v.min():.0%}, {v.max():.0%}] "
+            f"| {t.median():.0%} "
+            f"| {(v >= 0.99).sum()}/{g.height} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 
