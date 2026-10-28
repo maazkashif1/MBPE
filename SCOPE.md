@@ -243,3 +243,9 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
 - **NFP is calendar-only:** jobs and payroll news isn't in the GDELT keyword set, so there are no NFP news features.
 - **The 4c window is shorter** (2.3 years of test folds against 4.3 for 4a/4b), so its estimates are noisier.
 - **Archive timing:** `bookDepth` is published a day late. Live use needs our own snapshots, whose band construction may differ slightly from the archive's (see the parity check).
+
+## Amendments
+- **2026-10-28 (after the Phase 4 evaluation): live depth collector replaced by the archive.**
+  - **Change:** any forward test of order-book features uses the archive `bookDepth` daily files (published about a day late), instead of the live depth collector named in the Phase 4 pre-registration.
+  - **Reason:** the public REST order book returns at most 1,000 levels per side, which reach only about ±0.15% from mid. That's short of every `bookDepth` band (±0.2% to ±5%), so a REST poller can't rebuild them (FEASIBILITY.md, "Phase 4: live order book").
+  - **Effect:** none on any result. It was decided after the evaluation, and no extension passed, so no forward test was triggered.

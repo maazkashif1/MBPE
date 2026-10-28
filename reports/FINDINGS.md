@@ -1,6 +1,6 @@
 # MBPE findings
 
-> Final (tag `mbpe-research-v1`). It covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
+> Final. Tag `mbpe-research-v1` covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Tag `mbpe-research-v1.1` adds Phase 4, the checklist extensions (walk-forward only; the holdout stays closed). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
 
 ## Question
 Can hourly signals from BTCUSDT perpetual market data, derivatives data and news headlines predict triple-barrier trade outcomes well enough to make money **after costs**? In particular, does adding news improve on market data alone? The pre-registered kill criterion: if the news layer doesn't improve net-of-costs results across folds and the holdout, that is the finding.
@@ -168,3 +168,55 @@ The holdout (decision times from 2026-04-26 00:00 UTC to the last labelled hour)
 
 ## Conclusion
 Under free data, hourly decisions on BTCUSDT perpetuals and this barrier geometry, **there is no tradable edge after costs.** The models pick up a few basis points of gross directional signal, a fraction of the round-trip cost. **News headlines (GDELT, FinBERT sentiment) add nothing over market and derivatives data,** so the pre-registered kill criterion on the news layer is met: across the walk-forward folds and on the holdout. The study is closed at this point. Any new question (horizon, barrier geometry, execution model, data sources) needs its own pre-registration and fresh unseen data.
+
+## Phase 4: checklist extensions
+After the conclusion above, three extensions from the trading checklist were each tested once against rung 3 (FinBERT), under a protocol pre-registered in `SCOPE.md` ("Phase 4 pre-registration") before any feature was built:
+- **4a: MACD/EMA,** in ATR units;
+- **4b: NFP** release-calendar features plus an NFP blackout;
+- **4c: order-book depth** from Binance's `bookDepth` archive.
+
+**Evaluation:**
+- walk-forward folds only, before the holdout. The spent holdout wasn't re-used;
+- no tuning;
+- the decision configuration is label set A, taker costs, fixed-settings LightGBM.
+
+**To pass, an extension needs both:**
+- a gain of at least 2 bps in gross-bps advantage over the shuffled-label control, compared with rung 3 on the same window, pooled over all test trades;
+- a positive mean net R after taker costs.
+
+Passing would only have qualified an extension for a forward test.
+
+<!-- generated:phase4_kill -->
+| extension | vs | trades | gross bps | shuffled control gross bps | advantage | rung 3 advantage | **gain (≥ +2.0 to pass)** | folds improved | **mean net R [95% CI]** (> 0 to pass) | passes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4a MACD/EMA | rung 3, Phase 3 window | 3,954 | +3.7 | +0.7 | +3.0 | +2.2 | **+0.8** | 13/18 | **-0.137** [-0.168, -0.104] | no |
+| 4b NFP | rung 3, Phase 3 window | 4,340 | +2.4 | -0.0 | +2.4 | +2.2 | **+0.2** | 9/18 | **-0.160** [-0.188, -0.129] | no |
+| 4c order book | rung 3, 4c window (2023+) | 2,750 | +2.5 | -1.8 | +4.3 | +3.1 | **+1.2** | 5/10 | **-0.162** [-0.201, -0.121] | no |
+| rung 3 + NFP blackout only (not a decision) | rung 3, Phase 3 window | 3,931 | +4.8 | +2.9 | +1.9 | +2.2 | **-0.3** | 7/18 | **-0.127** [-0.158, -0.095] | – (reported only) |
+<!-- /generated:phase4_kill -->
+
+**Verdict: no extension passes; the Phase 3 finding stands.** None reaches the bps gain, and each loses money after costs with a 95% CI entirely below zero. No forward test is triggered. Full tables for every window, label set, cost scenario and model are in `PROGRESS.md` ("Phase 4 step 1").
+
+<!-- generated:phase4_window_facts -->
+| | |
+|---|---|
+| Phase 3 window: training from / test folds | 2021-01-01 / 18 folds, 2022-01-01 → 2026-04-26 |
+| 4c window (2023+): training from / test folds | 2023-01-01 / 10 folds, 2024-01-01 → 2026-04-26 |
+| ±0.2% band (book_imbalance_20bp) first present | 2026-01-15 |
+| latest end of any 4c training slice (validation starts there) | 2025-08-06 |
+| ±0.2% band present in any training slice | no |
+| shuffled-control gross bps, 4 Phase 3-window feature sets (A, taker): min / max | -0.0 / +2.9 (spread 2.9 bps; threshold 2.0) |
+<!-- /generated:phase4_window_facts -->
+
+- **NFP blackout alone:** rung 3 with only the NFP blackout added (last row of the kill table) trades about as before, with a slightly lower advantage. So 4b's result isn't driven by the blackout either way. It is reported for interpretation and decides nothing.
+- **The 4c window is shorter:** order-book data start in 2023, so 4c and its rung-3 comparison train from 2023 and are tested on fewer folds (table above). Its estimates are noisier than 4a's and 4b's.
+- **The ±0.2% band appears only from 2026-01-15:** Binance's `bookDepth` files carried only ±1–5% before that, so `book_imbalance_20bp` is missing for most of the 4c window.
+  - **No effect on the result:** the band never appears in any training slice (table above). It appears only in the last fold's validation slice and in test data, so no model could learn from it.
+  - **Not dropped:** it stayed in, as pre-registered, rather than being dropped after the fact.
+- **NFP is calendar-only:** jobs and payroll news isn't in the GDELT keyword set. 4b tests the release schedule, not news about the release.
+- **Live order book:** the planned live depth collector was replaced by the archive files for any future forward test (`SCOPE.md`, "Amendments"). The public REST order book doesn't reach the archive's bands.
+
+**Lesson for the criterion's design: average the shuffled control over several label permutations when a bps threshold decides.**
+- **The noise was as large as the threshold.** Each rung had a single shuffled-label control, and that control's gross bps moved between feature sets by about the size of the 2 bps threshold (table above). Some of each extension's measured gain came from its control moving, not from the model; for example, 4a's advantage rose while its own gross bps fell.
+- **It didn't change this verdict:** every extension also failed the net-R condition by a wide margin.
+- **The fix:** with a threshold this small, the control should be averaged over many permutations, with the same permutations across feature sets, so its noise is small next to the threshold.

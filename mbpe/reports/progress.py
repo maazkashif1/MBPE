@@ -17,6 +17,7 @@ import json
 import re
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
@@ -408,6 +409,48 @@ def phase4_reproduction() -> str:
         ("max |difference| in mean net R", f"{d['diff_mean_R'].max():.2g}"),
         ("max |difference| in gross bps per trade", f"{d['diff_gross_bps'].max():.2g}"),
     ]  # fmt: skip
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
+@block("phase4_window_facts")
+def phase4_window_facts() -> str:
+    """Windows, the late ±0.2% band vs the training slices, and the shuffled controls' spread."""
+    from mbpe.validation.phase4 import configs
+    from mbpe.validation.walk_forward import make_folds, to_ms
+
+    def day(ms: int) -> str:
+        return str(datetime.fromtimestamp(ms / 1000, UTC).date())
+
+    cfgs, rows = configs(), []
+    for v in ("phase3", "orderbook"):
+        c, f = cfgs[v], make_folds(cfgs[v])
+        rows.append(
+            (f"{VARIANT_NAME[v]}: training from / test folds", f"{c.eval_start.date()} / {len(f)} folds, "
+             f"{day(f[0].test_start)} → {day(f[-1].test_end)}")
+        )  # fmt: skip
+    c = cfgs["orderbook"]
+    train_end = max(
+        int(to_ms(c.eval_start) + (1 - c.val_fraction) * (f.test_start - to_ms(c.eval_start)))
+        for f in make_folds(c)
+    )
+    band = json.loads((P4 / "book_depth_scan.json").read_text())["band_first_seen"]["bid_depth_20bp"]
+    band_day = band[:10]
+    rows += [
+        ("±0.2% band (book_imbalance_20bp) first present", band_day),
+        ("latest end of any 4c training slice (validation starts there)", day(train_end)),
+        ("±0.2% band present in any training slice", "no" if band_day > day(train_end) else "**yes**"),
+    ]
+    ov = pl.read_csv(P4 / "overall_metrics.csv").filter(
+        (pl.col("variant") != "orderbook") & (pl.col("strategy") == "lgbm_shuffled")
+        & (pl.col("label_set") == "A") & (pl.col("scenario") == "taker")
+    )  # fmt: skip
+    g = ov["gross_bps_per_trade"]
+    rows.append(
+        (
+            f"shuffled-control gross bps, {ov.height} Phase 3-window feature sets (A, taker): min / max",
+            f"{fmt(g.min(), 1)} / {fmt(g.max(), 1)} (spread {g.max() - g.min():.1f} bps; threshold 2.0)",
+        )
+    )
     return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
 
 
