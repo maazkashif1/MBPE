@@ -193,7 +193,7 @@ def fit_meta(train: pl.DataFrame, test: pl.DataFrame, cfg) -> tuple[np.ndarray, 
     return p_test, info
 
 
-def _by_side(
+def by_side(
     is_long: np.ndarray, rows: np.ndarray, long_vals: np.ndarray, short_vals: np.ndarray
 ) -> np.ndarray:
     """Values of full-length per-side arrays at the candidate rows, taken from each candidate's side."""
@@ -276,16 +276,16 @@ def run(
                 **{f"p_{c}": p_side[:, i] for i, c in enumerate(CLASSES)},
                 **{v: vol[rows, i] for i, v in enumerate(META_VOL)},
                 # outcomes are always the true (unshuffled) labels
-                "exit_time": _by_side(is_long, rows, arr["long"]["exit"], arr["short"]["exit"]),
-                "net_R_taker": _by_side(
+                "exit_time": by_side(is_long, rows, arr["long"]["exit"], arr["short"]["exit"]),
+                "net_R_taker": by_side(
                     is_long, rows, arr["long"]["net"]["taker"], arr["short"]["net"]["taker"]
                 ),
-                "net_R_maker_entry_tp": _by_side(
+                "net_R_maker_entry_tp": by_side(
                     is_long, rows, arr["long"]["net"]["maker_entry_tp"], arr["short"]["net"]["maker_entry_tp"]
                 ),
-                "gross_R": _by_side(is_long, rows, arr["long"]["gross"], arr["short"]["gross"]),
-                "bps_per_R": _by_side(is_long, rows, arr["long"]["bps"], arr["short"]["bps"]),
-                "exit_class": _by_side(is_long, rows, cls["long"], cls["short"]),
+                "gross_R": by_side(is_long, rows, arr["long"]["gross"], arr["short"]["gross"]),
+                "bps_per_R": by_side(is_long, rows, arr["long"]["bps"], arr["short"]["bps"]),
+                "exit_class": by_side(is_long, rows, cls["long"], cls["short"]),
             }
         )
         cands.append(cand)
