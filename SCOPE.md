@@ -439,3 +439,24 @@ All features below use only data with timestamps before the decision time t, kee
 **Forward-only collectors** (no features yet; their features are pre-registered with the second model, after 6 months of data):
 - `mbpe/sources/rss_live.py`: CoinDesk, Cointelegraph, The Block, Decrypt and Bitcoin Magazine headlines, every 15 min. Availability = first fetch.
 - `mbpe/sources/liquidations_live.py`: the BTCUSDT `forceOrder` WebSocket on the `/market/` stream path. Coverage counts only while data is flowing; the legacy `/ws/` path connects but delivers nothing (checked 2026-10-28).
+
+### Phase 6 Workstream B: implementation definitions (fixed 2026-10-28, before the Workstream C evaluation run)
+Implemented in `mbpe/validation/phase6.py`. Details the Phase 6 pre-registration left open, fixed before any Phase 6 evaluation result exists (only a 1-fold smoke run for runtime, with no metrics looked at):
+- **Feature set:** rung 60 = rung 3 + `mark_premium` + `regulatory` (103 features).
+- **Primary classes:** 0 = stop first, 1 = expiry, 2 = take-profit first (the label's `exit_reason`), one model per side.
+- **LightGBM primary:** the fixed Phase 3 settings with `objective = multiclass`, early stopping on the validation slice (multi-logloss).
+- **CatBoost primary:** MultiClass, 3,000 iterations max, learning rate 0.03, depth 4, L2 3, seed 7, 4 threads, early stopping after 100 rounds on the validation slice. The open-interest/price quadrant code is used as a numeric feature (CatBoost categoricals can't hold NaN floats).
+- **Calibration:** isotonic per class (one-vs-rest) on the validation slice, with each row renormalized to sum 1.
+- **Decision:**
+  - class means = mean taker net R per class over the side's training slice;
+  - expected net R = probabilities · class means;
+  - candidate = the side with the higher expected net R, if > 0 and not blacked out; ties trade neither side;
+  - candidates are formed before the position rule, which is applied after any filter.
+- **Meta-model** (for both primaries): LightGBM binary with the fixed Phase 3 settings.
+  - **Training data:** the out-of-sample candidates of earlier test folds whose trade exited before the current fold starts.
+  - **Validation:** the last 20% of those candidates by decision time, with training candidates whose trade reaches it purged. Used for early stopping and isotonic calibration.
+  - **Weights:** uniqueness weights over the candidates' trade windows.
+  - **Inputs:** the proposed side's three class probabilities, the side (±1), `atr_1h_pct`, `rv_1h`, `rv_4h` and `rv_24h`.
+- **Validation-chosen threshold** (reported alongside the fixed 0.60): the Phase 3 threshold rule on the meta-validation slice (maximum mean taker net R with ≥ 100 trades). If no candidate threshold qualifies, that fold has no trades.
+- **SHAP:** exact TreeSHAP computed by the libraries themselves (LightGBM `pred_contrib`, CatBoost `ShapValues`), as mean |SHAP| per feature over each test fold. Multiclass values are averaged over classes.
+- **Shuffled-label control:** per side, training and validation rows' (class, net R) pairs are permuted together, so the class means follow the shuffled labels. Test-fold outcomes are never shuffled, and the meta-model of a shuffled run trains on that run's own out-of-sample candidates. 20 permutations (seeds 0–19), for the headline (LightGBM).

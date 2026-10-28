@@ -54,7 +54,8 @@ PHASE4_RUNGS = {
     42: (*RUNGS[3], "nfp"),  # 4b (+ NFP blackout, set in the config)
     43: (*RUNGS[3], "orderbook"),  # 4c
 }
-ALL_RUNGS = {**RUNGS, **PHASE4_RUNGS}
+PHASE6_RUNG = 60  # rung 3 + mark/premium + regulatory (SCOPE.md, Phase 6 Workstream B)
+ALL_RUNGS = {**RUNGS, **PHASE4_RUNGS, PHASE6_RUNG: (*RUNGS[3], "mark_premium", "regulatory")}
 MODELS = ("logreg", "lgbm")
 SIDES = ("long", "short")
 REPORT_DIR = Path("reports/phase3_step1")
@@ -84,7 +85,15 @@ def load_dataset(
         net_R_maker_entry_tp=scenario_net_r(lab, lcfg, "maker_entry_tp"),
         bps_per_R=(pl.col("entry_price") - pl.col("sl")).abs() / pl.col("entry_price") * 1e4,
     )
-    keep = ["label", "exit_time", "gross_R", "net_R_taker", "net_R_maker_entry_tp", "bps_per_R"]
+    keep = [
+        "label",
+        "exit_time",
+        "exit_reason",
+        "gross_R",
+        "net_R_taker",
+        "net_R_maker_entry_tp",
+        "bps_per_R",
+    ]
     wide = lab.filter(pl.col("side") == "long").select(
         "decision_time", *[pl.col(c).alias(f"long_{c}") for c in keep]
     )
