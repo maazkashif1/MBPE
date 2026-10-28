@@ -1573,3 +1573,64 @@ Random and volatility-filter baselines are medians over 20 seeds at the model's 
   - a peeking feature is caught;
   - bookDepth pivot (absent band → null, conflicting duplicates raise).
 - `tests/test_features.py` now also accepts group `macd_ema`, and its leakage tests cover the 4a features.
+
+## Phase 5 step 1: labels and always-trade baselines (2026-10-28, before any model)
+
+Pre-registered in `SCOPE.md` ("Phase 5 pre-registration") and committed before any Phase 5 label (8a8f3e2). No model has been trained. The holdout stays closed: decision times and exits are before 2026-04-26, checked by the guard.
+
+**Labels:** `uv run python -m mbpe.labels.triple_barrier config/labels_P5.yaml` → `data/labels/triple_barrier_P5.parquet`.
+- 4-hourly decisions (00–20 UTC), 24 h horizon, +2 / −1 × Wilder ATR(14) on UTC daily bars closed at or before t. Funding settlements in each trade window are included.
+- **Code change, configuration only:** `atr_timeframe` accepts daily bars (`1d`), and a new `decision_every_hours` (default 1) sets the cadence. Phase 1–4 labels are unchanged.
+- **Tests** (`tests/test_labels.py`): decisions fall only on the 4-hour grid; the daily ATR at 00:00–20:00 uses the bar closed at or before t, and a shock in the still-forming day doesn't change it; the default config stays hourly.
+
+**Report:** `uv run python -m mbpe.validation.phase5 step1` → `reports/phase5/`.
+
+### Exit reasons (per side; every 4-hourly decision, before the position rule)
+
+<!-- generated:phase5_exit_reasons -->
+| period | side | labels | tp | sl | expiry | label = 1 (net R > 0, taker) | mean hold (h) | mean gross R | mean net R (taker) | sd of net R per label (taker) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| evaluation window 2021-01-01 → holdout | long | 11,640 | 1.9% | 12.0% | 86.1% | 46.4% | 22.5 | +0.017 | -0.024 | 0.63 |
+| evaluation window 2021-01-01 → holdout | short | 11,640 | 2.1% | 12.1% | 85.8% | 45.6% | 22.5 | -0.009 | -0.038 | 0.62 |
+| test folds 2022-01-01 → holdout | long | 9,450 | 2.1% | 12.1% | 85.9% | 45.9% | 22.5 | +0.016 | -0.026 | 0.63 |
+| test folds 2022-01-01 → holdout | short | 9,450 | 1.9% | 12.4% | 85.7% | 45.2% | 22.5 | -0.009 | -0.043 | 0.62 |
+<!-- /generated:phase5_exit_reasons -->
+
+By year:
+
+<!-- generated:phase5_exit_reasons_by_year -->
+| year | side | labels | tp | sl | expiry | label = 1 (net R > 0, taker) | mean hold (h) | mean gross R | mean net R (taker) | sd of net R per label (taker) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2021 | long | 2,190 | 1.1% | 12.0% | 86.9% | 48.6% | 22.5 | +0.020 | -0.014 | 0.61 |
+| 2021 | short | 2,190 | 2.8% | 10.8% | 86.3% | 47.3% | 22.6 | -0.010 | -0.020 | 0.64 |
+| 2022 | long | 2,190 | 1.0% | 11.1% | 87.9% | 41.9% | 22.7 | -0.043 | -0.074 | 0.57 |
+| 2022 | short | 2,190 | 2.1% | 9.5% | 88.4% | 50.1% | 22.8 | +0.048 | +0.022 | 0.61 |
+| 2023 | long | 2,190 | 4.5% | 10.9% | 84.6% | 45.5% | 22.3 | +0.070 | +0.020 | 0.67 |
+| 2023 | short | 2,190 | 1.3% | 15.3% | 83.4% | 42.1% | 22.1 | -0.057 | -0.096 | 0.59 |
+| 2024 | long | 2,196 | 2.4% | 12.6% | 85.0% | 49.3% | 22.4 | +0.050 | +0.008 | 0.66 |
+| 2024 | short | 2,196 | 2.1% | 13.8% | 84.1% | 43.6% | 22.3 | -0.034 | -0.063 | 0.63 |
+| 2025 | long | 2,190 | 0.9% | 13.2% | 85.8% | 47.1% | 22.5 | -0.001 | -0.049 | 0.61 |
+| 2025 | short | 2,190 | 1.6% | 11.6% | 86.8% | 44.2% | 22.7 | -0.007 | -0.046 | 0.62 |
+| 2026 | long | 684 | 0.7% | 13.0% | 86.3% | 45.5% | 22.6 | -0.021 | -0.058 | 0.61 |
+| 2026 | short | 684 | 2.9% | 11.1% | 86.0% | 47.8% | 22.6 | +0.032 | -0.004 | 0.64 |
+<!-- /generated:phase5_exit_reasons_by_year -->
+
+- **Mostly expiries, as pre-registered.** The take-profit is rarely reached and the stop more often, so a trade's outcome is mostly its 24 h return net of costs.
+- **Per-trade dispersion of net R is well below 1** (last column). For the forward-test power statement in SCOPE.md, this means 100 trades would give a somewhat narrower CI than the stated ±0.2 R, so that statement is conservative.
+
+### Always-long / always-short (Phase 3 test folds; one position at a time; no blackout)
+
+<!-- generated:phase5_always -->
+| baseline | scenario | trades | mean net R [95% CI] | net / gross bps | hit rate | profit factor | folds with mean net R > 0 |
+|---|---|---|---|---|---|---|---|
+| always_long | taker | 1,460 | -0.023 [-0.057, +0.015] | -10.3 / +5.4 | 45.6% | 0.91 | 7/18 |
+| always_long | maker_entry_tp | 1,460 | -0.009 [-0.043, +0.029] | -5.2 / +5.4 | 47.1% | 0.96 | 8/18 |
+| always_short | taker | 1,475 | -0.055 [-0.092, -0.020] | -18.1 / -5.8 | 44.7% | 0.80 | 6/18 |
+| always_short | maker_entry_tp | 1,475 | -0.041 [-0.078, -0.006] | -13.0 / -5.8 | 46.4% | 0.84 | 6/18 |
+<!-- /generated:phase5_always -->
+
+- **Costs are a much smaller share of a trade here than in Phase 3,** because the R unit is a daily ATR, not an hourly one. Always-long's upward drift nearly covers the taker costs: its mean net R is slightly negative, with a CI that includes zero.
+- **Implication for the pass criterion:** a model that mostly learns "go long" could get close to zero net R with no real skill. The pre-registered criterion still requires the CI lower bound above zero and beating all 20 shuffled-label runs. The shuffled controls also see the long drift, through their trade frequency and side mix.
+- **Always-short loses money in both cost scenarios.**
+
+**Next:** stop for review before any model is trained (step 2 = the pre-registered models, rungs 1–3, controls and pass criterion).

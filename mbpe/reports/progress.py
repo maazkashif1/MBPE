@@ -499,6 +499,57 @@ def phase4_baselines() -> str:
     return "\n".join(out) + "\n"
 
 
+# ---------- Phase 5 ----------
+
+P5 = R / "phase5"
+
+
+def _exit_rows(d: pl.DataFrame, key: str) -> list[str]:
+    return [
+        f"| {r[key]} | {r['side']} | {r['labels']:,} | {r['tp']:.1%} | {r['sl']:.1%} | {r['expiry']:.1%} "
+        f"| {r['label_1']:.1%} | {r['mean_hold_h']:.1f} | {fmt(r['mean_gross_R'])} "
+        f"| {fmt(r['mean_net_R_taker'])} | {r['sd_net_R_taker']:.2f} |"
+        for r in d.iter_rows(named=True)
+    ]
+
+
+EXIT_HEAD = (
+    "| tp | sl | expiry | label = 1 (net R > 0, taker) | mean hold (h) | mean gross R | mean net R (taker) "
+    "| sd of net R per label (taker) |"
+)
+
+
+@block("phase5_exit_reasons")
+def phase5_exit_reasons() -> str:
+    d = pl.read_csv(P5 / "exit_reasons.csv")
+    out = ["| period | side | labels " + EXIT_HEAD, "|---|---|---|---|---|---|---|---|---|---|---|"]
+    return "\n".join(out + _exit_rows(d, "period")) + "\n"
+
+
+@block("phase5_exit_reasons_by_year")
+def phase5_exit_reasons_by_year() -> str:
+    d = pl.read_csv(P5 / "exit_reasons_by_year.csv")
+    out = ["| year | side | labels " + EXIT_HEAD, "|---|---|---|---|---|---|---|---|---|---|---|"]
+    return "\n".join(out + _exit_rows(d, "year")) + "\n"
+
+
+@block("phase5_always")
+def phase5_always() -> str:
+    ov, pf = pl.read_csv(P5 / "always_overall.csv"), pl.read_csv(P5 / "always_folds.csv")
+    out = [
+        "| baseline | scenario | trades | mean net R [95% CI] | net / gross bps | hit rate | profit factor "
+        "| folds with mean net R > 0 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in ov.iter_rows(named=True):
+        f = pf.filter((pl.col("strategy") == r["strategy"]) & (pl.col("scenario") == r["scenario"]))
+        out.append(
+            f"| {r['strategy']} | {r['scenario']} | {r['trades']:,} | {_ci(r)} | {_bps(r)} "
+            f"| {r['hit_rate']:.1%} | {r['profit_factor']:.2f} | {(f['mean_R'] > 0).sum()}/{f.height} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 
