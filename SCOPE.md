@@ -183,3 +183,63 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **> 0 with a 95% CI excluding zero:** reported as unexpected but **not acted on**. One 6-month window after 2,188 trials isn't enough evidence; at most it justifies a forward test on new live data;
   - **> 0 with a CI including zero:** inconclusive, which is consistent with no edge.
 - **Run once,** with `allow_holdout=True`, so every access is logged in `data/logs/holdout_access.jsonl`. If a bug is found afterwards, it is fixed and the holdout re-run, and **both** results are reported with an explanation.
+
+## Phase 4 pre-registration (decided 2026-10-28, before any Phase 4 feature or model)
+
+**Question.** Does any of three checklist extensions, added to Phase 3 rung 3 (FinBERT), produce an edge after costs that Phase 3 didn't find? Each extension is tested separately against rung 3, not stacked.
+
+**Data decisions.**
+- **Order book = `bookDepth` only** (daily archive files, BTCUSDT USD-M, from 2023-01-01). `bookTicker` is excluded: it is not published after 2024-03-30.
+- **A `bookDepth` file under 2 KB counts as a missing day,** like an absent file. Its hours have no order-book features (NaN).
+- `bookDepth` is ingested like the Phase 1 Binance datasets: SHA-256 checked, clean layer, and a full gap scan of the snapshot timestamps.
+
+**Rungs** (all feature values are computed from data with timestamps before the decision time t):
+- **Base = rung 3:** technical + derivatives + news + calendar (CPI/FOMC), exactly as in Phase 3.
+- **4a = rung 3 + MACD/EMA** (group `macd_ema`, 6 features), on 1h futures closes (bars present, in time order, as for RSI), using the bar ending at t:
+  - MACD(12, 26, 9): line = EMA12 − EMA26, signal = EMA9 of the line, histogram = line − signal. **Each is divided by ATR(14, 1h).**
+  - Price distance from EMA 20, 50 and 200: (close − EMA_n) / ATR(14, 1h).
+  - EMAs use α = 2 / (n + 1), recursive from the first available bar (Sep 2020), so they are fully warmed up by the 2021 evaluation start. **No raw EMA levels.**
+- **4b = rung 3 + NFP** (group `nfp`, 3 features, plus blackout):
+  - features, mirroring CPI/FOMC: hours to the next NFP release after t, hours since the last one at or before t, NFP in the next 4 h;
+  - blackout: NFP releases join CPI/FOMC in the entry-time rule [entry − 30 min, entry + 4 h], for 4b's models and all of their baselines and controls.
+- **4c = rung 3 + order book** (group `orderbook`, 8 features), from `bookDepth` snapshots with timestamps **strictly before t**:
+  - **Staleness:** the last snapshot before t must be at most **2 minutes** old, otherwise every order-book feature at t is NaN.
+  - **Depth imbalance per band,** b ∈ {0.2, 1, 2, 3, 4, 5}%: (bid depth at −b − ask depth at +b) / (bid + ask), using cumulative depth in BTC. 6 features.
+  - **Total depth** D = bid depth at −5% + ask depth at +5% (everything the file covers).
+  - **Depth change over 1 h:** log(D_t / D_{t−1h}). D_{t−1h} comes from the last snapshot before t − 1h, under the same 2-minute limit.
+  - **Depth vs its 7-day median:** log(D_t / median of D at the previous 168 hourly decision times). The median needs ≥ 84 non-missing values, otherwise NaN.
+
+**Evaluation.**
+- **Walk-forward only, decision times before 2026-04-26.** The holdout stays closed. The spent Phase 3 holdout is not re-used.
+- **Same protocol as Phase 3:**
+  - purge and embargo;
+  - last-20% validation slice, uniqueness weights, isotonic calibration;
+  - threshold rule (≥ 100 validation trades);
+  - position rule and blackout;
+  - baselines: always-trade, random and volatility filter (20 seeds each), plus the shuffled-label control (LightGBM, label set A, run with the same features and blackout as the model it controls).
+- **Windows:**
+  - **4a, 4b and rung 3:** the Phase 3 window and folds (training from 2021-01-01; 18 test folds from 2022-01-01).
+  - **4c and rung 3 re-evaluated:** training from **2023-01-01**, 10 quarterly test folds from **2024-01-01** to 2026-04-26 (the last is Apr 1–25, 2026). Both use exactly this window and these folds.
+- **Models and settings:** logistic regression and LightGBM with the fixed Phase 3 settings. **No tuning in Phase 4.**
+- **Reported:** both label sets × both cost scenarios × both models, per fold and overall, for rung 3, 4a, 4b, **rung 3 with the NFP blackout only** (to separate 4b's blackout from its features) and 4c (with rung 3 on the 4c window). Nothing is dropped.
+
+**Decision configuration:** label set A, taker costs, fixed-settings LightGBM.
+
+**Kill criterion (per extension, against rung 3 on the same window).**
+- **Pass = both of:**
+  1. **Bps advantage improves by ≥ 2 bps.** Advantage = gross bps per trade of the model minus that of its shuffled-label control, each **pooled across all test trades** of the window. Required: advantage(extension) − advantage(rung 3) ≥ 2.0 bps.
+  2. **Mean net R after taker costs > 0** (point estimate, pooled over all test trades). The 95% block-bootstrap CI is reported alongside.
+- **Also reported:** the number of folds in which the extension's per-fold advantage exceeds rung 3's.
+- **4b is decided against rung 3 with the original blackout.** Rung 3 with the NFP blackout alone is reported for interpretation only.
+- **Passing only qualifies an extension for a forward test** on data after 2026-10-25, pre-registered separately before that data is examined. It is not an edge. If no extension passes, the Phase 3 finding stands.
+
+**Social (Reddit).** Forward data only. It is collected once credentials are confirmed and **excluded from every Phase 4 evaluation**.
+
+**Live order book.** `mbpe/sources/binance_depth_live.py` collects the same 12 bands forward from the REST order book, with a parity check against the archive on overlapping days. It is forward-only and not used in the Phase 4 evaluation.
+
+**Multiple testing.** Phase 4 re-uses walk-forward data Phase 3 already looked at. Its evaluated configurations are added to the trial count for any deflated Sharpe estimate.
+
+**Limitations (known now).**
+- **NFP is calendar-only:** jobs and payroll news isn't in the GDELT keyword set, so there are no NFP news features.
+- **The 4c window is shorter** (2.3 years of test folds against 4.3 for 4a/4b), so its estimates are noisier.
+- **Archive timing:** `bookDepth` is published a day late. Live use needs our own snapshots, whose band construction may differ slightly from the archive's (see the parity check).

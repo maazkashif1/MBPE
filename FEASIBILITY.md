@@ -508,6 +508,8 @@ Example rows:
 | NFP calendar | 73 releases (Aug 2020 → Sep 2026 reference months) + 1 cancelled (Oct 2025) + 2 scheduled, added to `data/reference/macro_events.csv`. Phase 3 features and blackout are unchanged (CPI + FOMC only; tested) | ✅ done |
 | Reddit live collector | `mbpe/sources/reddit_live.py` written and tested offline (fake client). **Not started**: waiting for your credentials | ⏸ waiting on you |
 
+**Decided at review (2026-10-28):** bookTicker is excluded, bookDepth only. bookDepth files under 2 KB count as missing days. The rest is pre-registered in SCOPE.md ("Phase 4 pre-registration").
+
 Details for each are in the sections below.
 <!-- /phase4_summary -->
 
