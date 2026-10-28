@@ -249,3 +249,72 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Change:** any forward test of order-book features uses the archive `bookDepth` daily files (published about a day late), instead of the live depth collector named in the Phase 4 pre-registration.
   - **Reason:** the public REST order book returns at most 1,000 levels per side, which reach only about ±0.15% from mid. That's short of every `bookDepth` band (±0.2% to ±5%), so a REST poller can't rebuild them (FEASIBILITY.md, "Phase 4: live order book").
   - **Effect:** none on any result. It was decided after the evaluation, and no extension passed, so no forward test was triggered.
+
+## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
+
+**Status of any historical result.** The 2021–2026 data was studied in Phases 3–4, so Phase 5's historical results are **development evidence only**. They can at most trigger a forward test; they can never establish an edge. The Phase 3 holdout (2026-04-26 → 2026-10-25) is spent and isn't used: decision times and exits stay before 2026-04-26.
+
+**Question.** Does the Phase 3 approach work at a slower cadence, where fixed costs are a smaller share of each trade's typical move?
+- **Decisions:** every 4 hours.
+- **Horizon:** 24 h.
+- **Barriers:** set by daily ATR.
+
+**Decisions and labels.** One label set only: `config/labels_P5.yaml` → `data/labels/triple_barrier_P5.parquet`, built by the existing triple-barrier code. The only code changes are configurable: daily ATR bars and the decision cadence. Defaults stay hourly / `h`, so the Phase 1–4 labels are unchanged.
+- **Decision times:** 00, 04, 08, 12, 16 and 20 UTC.
+- **Barriers:** take-profit +2 ATR and stop −1 ATR (1 R = 1 ATR).
+  - ATR = Wilder ATR(14) on UTC daily bars built from 1m futures candles, using **only bars closed at or before t**. At 00:00 that includes the bar that just closed; at 04:00–20:00 it is the same bar.
+- **Horizon** 24 h. Other label rules are as in Phase 1:
+  - entry at the open of the 1m candle at t + 1 min;
+  - stop assumed first when both barriers fall in one candle;
+  - gaps through the stop fill at the open.
+- **Mostly expiries are expected.** Over 24 h the price rarely moves 2 daily ATRs, so most trades will end at the horizon, and their outcome is essentially the 24 h return net of costs.
+- **Exit-reason shares** (take-profit / stop / expiry) and the always-long / always-short baselines are reported **before any model is trained** (step 1, then review).
+- **Training target:** net R > 0 under taker costs, as in Phase 3.
+
+**Costs.**
+- **Taker (headline):** 0.05% fee + 2 bps slippage per side.
+- **`maker_entry_tp`:** reported alongside.
+- **Funding:** every settlement in (entry, exit], up to 3 per trade on the 8 h grid. Labels fail if funding data is missing (Phase 1 rule).
+
+**Features.**
+- **The existing Phase 3 feature set, unchanged,** sampled at the 4-hourly decision times: market, derivatives, FinBERT news and CPI/FOMC calendar features. **No new features.**
+- **Ablation rungs 1–3,** as in Phase 3, all reported.
+
+**Models.** Logistic regression and LightGBM with the fixed Phase 3 settings, isotonic calibration on the validation slice. **No tuning.**
+
+**Validation.**
+- **Folds:** the same walk-forward folds and dates as Phase 3 (training from 2021-01-01; 18 quarterly test folds from 2022-01-01 to 2026-04-26). Last-20% validation slice.
+- **Purge:** drop training rows whose 24 h label window (decision → exit) overlaps the test fold, and the validation slice likewise.
+- **Embargo:** **48 h** after each test fold. As in Phase 3, it doesn't bind with forward-only folds.
+- **Sample weights:** label-overlap (average uniqueness) weights. With 24 h windows every 4 h, each label overlaps about 6 others.
+- **Position rule:** one position at a time across both sides; signals during an open trade are ignored; long and short together means neither.
+- **Entry rule (replaces the Phase 3 threshold search, for Phase 5 only): no search.**
+  - Per fold and side, a test decision is a signal when its calibrated score is **≥ the 75th percentile** of that side's calibrated scores on the validation slice (numpy `quantile`, linear), i.e. the top 25%.
+  - Isotonic calibration produces tied scores, so the realized share can exceed 25%. The realized validation and test shares are reported per fold and side.
+  - The signals are the same in both cost scenarios; each scenario is evaluated on its own net R.
+
+**Blackout: none.**
+- **Reason:** a 24 h window contains a CPI, FOMC or NFP release on many days, so a blackout would remove a large, non-random share of decisions.
+- **Calendar features stay in,** so the models can still condition on releases.
+
+**Controls** (all at the model's own trade frequency, same position rule):
+- always-long and always-short;
+- random entry (20 seeds);
+- **volatility filter** (20 seeds): random direction in high-volatility decision times. The volatility measure is the **daily ATR** (the label's ATR, divided by the futures close at t), matching the barriers. The cutoff comes from the validation slice, as in Phase 3;
+- **shuffled-label control, 20 permutations:** 20 separate runs per rung, with training and validation labels permuted (seeds 0–19). The same permutations are used across rungs.
+
+**Historical pass criterion** (rung 3 LightGBM, taker costs, pooled over all test trades). Pass = all of:
+1. **Mean net R > 0,** and
+2. **the 95% block-bootstrap CI lower bound > 0,** and
+3. **the permutation test:** rung 3 LightGBM's mean net R exceeds that of **all 20** shuffled-label runs (p < 0.05).
+
+Passing **only triggers a forward test.** Not passing ends Phase 5 with the Phase 3 finding unchanged. All configurations, rungs, models and controls are reported either way.
+
+**Forward test (only if the historical criterion passes).**
+- **Data:** decision times after 2026-10-25, from archive data only: the Binance archive (`data.binance.vision`) and the GDELT bulk files (15-minute GKG files), fetched after the fact. The live collectors aren't required.
+- **Protocol:** models trained on data before the forward period with the Phase 5 settings above, frozen, then applied unchanged.
+- **Verdict only after both** ≥ 6 months of forward decision times **and** ≥ 100 forward trades.
+- **Power:** with per-trade R dispersion of roughly 1, 100 trades give a 95% CI of about ±0.2 R on the mean. **The forward test can only detect a large edge or a clear failure; it cannot confirm a small one.**
+- **Pass criterion:** written and committed **before the forward test starts**, and before any forward-period outcome is looked at.
+
+**Multiple testing.** Phase 5 adds configurations on data already used in Phases 3–4. They are added to the trial count for any deflated Sharpe estimate.
