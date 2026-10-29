@@ -257,6 +257,12 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Interpretation rule:** if the headline passes the criterion but its mean net R (taker, pooled) does **not exceed** always-long's, the result is reported as **"drift exposure, not predictive edge"**. The forward test is still triggered as pre-registered, but every report of the result must state this.
   - **Also reported:** the share of the model's trades that are long, for the headline and every model configuration.
   - **Reason:** step 1 showed that always-long is close to break-even after taker costs at this horizon, so a model that mostly goes long could pass without directional skill.
+- **2026-10-29 (Phase 6, after the Workstream C results, before the forward model is frozen): forward-test threshold changed to the validation-chosen threshold.**
+  - **Change:** the frozen system trades when the meta-model's P(success) ≥ the **validation-chosen threshold**, instead of the pre-registered fixed 0.60. The threshold is computed by the Phase 3 threshold rule on the frozen meta-model's own validation slice and stored in the artifact's `manifest.json`.
+  - **Reason:** in Workstream C, the calibrated meta-model put a candidate at ≥ 0.60 only very rarely. At 0.60 the system would trade about once a month, so the pre-registered verdict condition (≥ 100 trades) would take years.
+  - **Decided after seeing results, and stated plainly:** in Workstream C, the validation-threshold variant was the best LightGBM configuration but **still lost money after taker costs**. So the forward test has a negative historical expectation. It is a test of the scoped system as built, not of a candidate edge. The 0.60 variant is not forward-tested.
+  - **Unchanged:** the model (LightGBM primary + meta-filter), the data, the live rules (Workstream D definitions), and the forward pass criterion (verdict only after ≥ 6 months **and** ≥ 100 trades; mean net R > 0 with the 95% CI lower bound > 0, and above always-long over the same period).
+  - **Where it runs:** this Mac, via launchd. Hours missed while the Mac sleeps or is offline, and late runs, are recorded as no decision (Workstream D rules), which can delay reaching 100 trades.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 

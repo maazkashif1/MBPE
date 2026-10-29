@@ -75,3 +75,11 @@ def test_tampered_artifact_is_refused(frozen, tmp_path):
     (bad / "model.pkl").write_bytes((bad / "model.pkl").read_bytes() + b"x")
     with pytest.raises(ValueError, match="does not match"):
         lmod.load(bad)
+
+
+def test_freeze_with_the_validation_threshold(frozen, tmp_path):
+    cfg, df, a, _ = frozen
+    fz_default = lmod.load(a)
+    v = lmod.load(lmod.freeze("val", root=tmp_path, cfg=cfg, df=df))
+    assert v.version == fz_default.version  # same fitted parameters; only the cutoff differs
+    assert v.threshold == fz_default.val_threshold and v.threshold == v.manifest["val_threshold"]

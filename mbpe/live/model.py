@@ -12,7 +12,7 @@ version.
 predict(): one feature row -> per-side calibrated class probabilities, expected net R, the candidate side
 (blackout applied), the meta P(success) and the decision at the artifact's threshold.
 
-Usage: uv run python -m mbpe.live.model freeze [--threshold 0.60]
+Usage: uv run python -m mbpe.live.model freeze [--threshold 0.60 | --threshold val]
 """
 
 import hashlib
@@ -64,7 +64,8 @@ def _canonical(primary: dict, meta: dict) -> bytes:
     return json.dumps(obj, sort_keys=True).encode()
 
 
-def freeze(threshold: float = p6.META_THRESHOLD, root: Path = MODEL_ROOT, cfg=None, df=None) -> Path:
+def freeze(threshold: float | str = p6.META_THRESHOLD, root: Path = MODEL_ROOT, cfg=None, df=None) -> Path:
+    """threshold: a P(success) cutoff, or "val" for the meta-model's validation-chosen threshold."""
     cfg = cfg or p6.cfg_p6()
     df = load_dataset("A", cfg) if df is None else df
     names = rung_features(PHASE6_RUNG)
@@ -99,6 +100,12 @@ def freeze(threshold: float = p6.META_THRESHOLD, root: Path = MODEL_ROOT, cfg=No
         "calibrator": minfo["calibrator"],
         "best_iteration": minfo["meta_best_iteration"],
     }
+    if threshold == "val":
+        if minfo["val_threshold"] is None:
+            raise ValueError(
+                "no validation-chosen threshold qualified (Phase 3 rule: >= 100 validation trades)"
+            )
+        threshold = float(minfo["val_threshold"])
     version = hashlib.sha256(_canonical(primary, meta)).hexdigest()[:16]
     out = root / version
     out.mkdir(parents=True, exist_ok=True)
@@ -172,11 +179,8 @@ def latest(root: Path = MODEL_ROOT) -> Path:
 
 if __name__ == "__main__":
     if sys.argv[1] == "freeze":
-        thr = (
-            float(sys.argv[sys.argv.index("--threshold") + 1])
-            if "--threshold" in sys.argv
-            else p6.META_THRESHOLD
-        )
+        arg = sys.argv[sys.argv.index("--threshold") + 1] if "--threshold" in sys.argv else p6.META_THRESHOLD
+        thr = arg if arg == "val" else float(arg)
         path = freeze(thr)
         print(
             json.dumps(
