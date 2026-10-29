@@ -327,11 +327,17 @@ class NewsInputs:
     events: np.ndarray
 
 
-def load_inputs(cfg: NewsConfig, require_scores: bool = True) -> NewsInputs:
+def load_inputs(cfg: NewsConfig, require_scores: bool = True, dedup_path: Path = DEDUP_PATH) -> NewsInputs:
     from mbpe.features.sentiment import scores_path, unique_titles
     from mbpe.sources.gdelt_live import load_coverage, load_news_rows
 
-    rows = load_news_rows()
+    # Use rows (and coverage) up to the last batch the dedup store has processed. Rows inside that range
+    # must all have clusters (prepare() raises otherwise: re-run dedup); later rows belong to a newer store
+    # (the live one), so a research rebuild stays reproducible while live collection continues.
+    clusters = pl.read_parquet(dedup_path)
+    last = clusters["DATE"].max()
+    rows = load_news_rows().filter(pl.col("DATE") <= last)
+    coverage = load_coverage().filter(pl.col("DATE") <= last)
     path = scores_path(cfg.default_sentiment)
     scores = pl.read_parquet(path) if path.exists() else None
     if require_scores:
@@ -341,7 +347,7 @@ def load_inputs(cfg: NewsConfig, require_scores: bool = True) -> NewsInputs:
             raise SystemExit(
                 f"{cfg.default_sentiment} scores incomplete ({have:,}/{n_titles:,}); run score-all"
             )
-    return NewsInputs(prepare(rows, pl.read_parquet(DEDUP_PATH), scores), load_coverage(), load_calendar())
+    return NewsInputs(prepare(rows, clusters, scores), coverage, load_calendar())
 
 
 def main() -> None:

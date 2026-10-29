@@ -104,9 +104,33 @@ def embedder(cfg: NewsConfig) -> Callable[[list[str]], np.ndarray]:
     return embed
 
 
-def dedup(df: pl.DataFrame, embed: Callable[[list[str]], np.ndarray], cfg: NewsConfig) -> pl.DataFrame:
-    """Add cluster_id, cluster_DATE (earliest member's DATE), match_sim (to the joined row; null = new)."""
+def dedup(
+    df: pl.DataFrame,
+    embed: Callable[[list[str]], np.ndarray],
+    cfg: NewsConfig,
+    fixed: pl.DataFrame | None = None,
+    next_cluster_id: int = 0,
+) -> pl.DataFrame:
+    """Add cluster_id, cluster_DATE (earliest member's DATE), match_sim (to the joined row; null = new).
+
+    `fixed` (live use): rows already assigned (DATE, DocumentIdentifier, cluster_id, cluster_DATE, match_sim).
+    Rows of `df` found there keep their assignment and only serve as context; the others are assigned by the
+    same rule. New cluster ids start at max(next_cluster_id, largest fixed id + 1); live callers pass the
+    store's next id so ids never repeat. Processing a stream in time-ordered chunks this way (with >= one
+    window of context) reproduces a single full run exactly.
+    """
     df = df.sort("DATE", "DocumentIdentifier")
+    key = ["DATE", "DocumentIdentifier"]
+    if fixed is not None:
+        df = df.join(
+            fixed.select(*key, fx_id="cluster_id", fx_first="cluster_DATE", fx_sim="match_sim"),
+            on=key,
+            how="left",
+        )
+    else:
+        df = df.with_columns(
+            fx_id=pl.lit(None, pl.Int64), fx_first=pl.lit(None, pl.Int64), fx_sim=pl.lit(None, pl.Float64)
+        )
     t = df.select(batch_time().dt.epoch("s"))["DATE"].to_numpy()
     norm = [normalize_title(x) for x in df["title"].to_list()]
     uniq = sorted({n for n in norm if n})
@@ -117,11 +141,28 @@ def dedup(df: pl.DataFrame, embed: Callable[[list[str]], np.ndarray], cfg: NewsC
     max_age = cfg.dedup_cluster_max_hours * 3600
 
     n = len(norm)
-    first_t = np.empty(n, np.int64)  # first member's time, by cluster id (ids are < n)
+    is_fixed = df["fx_id"].is_not_null().to_numpy()
+    fx_ids = df["fx_id"].fill_null(-1).to_numpy()
+    # local cluster ids: fixed clusters first (dense), then new ones; all < n
+    uniq_fx, fx_local = np.unique(fx_ids[is_fixed], return_inverse=True)
+    first_t = np.empty(n, np.int64)  # first member's time, by local cluster id
     cluster = np.empty(n, np.int64)
-    sim_out = np.full(n, np.nan)
+    sim_out = df["fx_sim"].fill_null(np.nan).to_numpy().astype(float)
+    cluster[is_fixed] = fx_local
+    if is_fixed.any():
+        fx_first = (
+            pl.DataFrame({"d": df["fx_first"].filter(is_fixed)})
+            .select(
+                pl.col("d")
+                .cast(pl.String)
+                .str.strptime(pl.Datetime("ms", "UTC"), "%Y%m%d%H%M%S")
+                .dt.epoch("s")
+            )["d"]
+            .to_numpy()
+        )
+        first_t[fx_local] = fx_first
     lo = np.searchsorted(t, t - window, side="left")  # first row within the window of row i
-    next_id = 0
+    next_id = len(uniq_fx)
     day = t // 86400
     for d in np.unique(day):  # one similarity block per day: day rows vs their window
         a, b = np.searchsorted(day, d), np.searchsorted(day, d, side="right")
@@ -130,6 +171,8 @@ def dedup(df: pl.DataFrame, embed: Callable[[list[str]], np.ndarray], cfg: NewsC
         sims = emb[np.maximum(rows, 0)] @ emb[np.maximum(cols, 0)].T
         sims[:, cols < 0] = -1.0  # empty-title rows can't be matched
         for i in range(a, b):
+            if is_fixed[i]:
+                continue  # already assigned (live context)
             k = None
             if inv[i] >= 0 and i > lo[i]:
                 cand = sims[i - a, lo[i] - w : i - w]  # strictly earlier rows inside the window
@@ -145,9 +188,22 @@ def dedup(df: pl.DataFrame, embed: Callable[[list[str]], np.ndarray], cfg: NewsC
                 next_id += 1
             else:
                 cluster[i] = cluster[k]
-    out = df.with_columns(cluster_id=pl.Series(cluster), match_sim=pl.Series(sim_out).fill_nan(None))
-    first = out.group_by("cluster_id").agg(cluster_DATE=pl.col("DATE").first())  # rows are in time order
-    return out.join(first, on="cluster_id", how="left")
+    # back to global ids: fixed clusters keep theirs, new ones continue after the largest fixed id
+    n_fx = len(uniq_fx)
+    in_fixed = cluster < n_fx  # joined an already-existing cluster (or is a fixed row)
+    shift = max(next_cluster_id, int(uniq_fx.max()) + 1 if n_fx else 0) - n_fx
+    gid = cluster + shift  # new clusters: ids continue after the largest fixed id
+    gid[in_fixed] = uniq_fx[cluster[in_fixed]]
+    out = df.with_columns(cluster_id=pl.Series(gid), match_sim=pl.Series(sim_out).fill_nan(None))
+    # cluster_DATE: an existing cluster keeps its recorded first member (which may precede df); a new
+    # cluster's first member is its earliest row here (rows are in time order)
+    first = out.group_by("cluster_id").agg(
+        fx_first=pl.col("fx_first").drop_nulls().first(), new_first=pl.col("DATE").first()
+    )
+    out = out.drop("fx_first").join(first, on="cluster_id", how="left")
+    return out.with_columns(cluster_DATE=pl.coalesce("fx_first", "new_first")).drop(
+        "fx_id", "fx_first", "fx_sim", "new_first"
+    )
 
 
 def cluster_available_at() -> pl.Expr:

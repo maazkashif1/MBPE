@@ -62,19 +62,28 @@ def cfg_p6():
 # ---------- primary model ----------
 
 
+def fit_calibrators(raw_val, y_val, w_val) -> list[IsotonicRegression]:
+    """Isotonic calibrator per class (one-vs-rest), fitted on the validation slice."""
+    return [
+        IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1).fit(
+            raw_val[:, c], (y_val == c).astype(float), sample_weight=w_val
+        )
+        for c in range(len(CLASSES))
+    ]
+
+
+def apply_calibrators(isos: list[IsotonicRegression], raw: np.ndarray) -> np.ndarray:
+    """Calibrated class probabilities, rows renormalized to sum 1 (uniform if all zero)."""
+    if not len(raw):
+        return np.zeros((0, len(CLASSES)))
+    p = np.column_stack([iso.predict(raw[:, c]) for c, iso in enumerate(isos)])
+    s = p.sum(axis=1, keepdims=True)
+    return np.where(s > 0, p / np.where(s > 0, s, 1), 1 / len(CLASSES))
+
+
 def calibrate_multiclass(raw_val, y_val, w_val, raw_test) -> tuple[np.ndarray, np.ndarray]:
-    """Isotonic per class (one-vs-rest) on validation, rows renormalized to sum 1 (uniform if all zero)."""
-    out = []
-    for raw in (raw_val, raw_test):
-        cols = []
-        for c in range(len(CLASSES)):
-            iso = IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1)
-            iso.fit(raw_val[:, c], (y_val == c).astype(float), sample_weight=w_val)
-            cols.append(iso.predict(raw[:, c]) if len(raw) else np.zeros(0))
-        p = np.column_stack(cols) if len(raw) else np.zeros((0, len(CLASSES)))
-        s = p.sum(axis=1, keepdims=True)
-        out.append(np.where(s > 0, p / np.where(s > 0, s, 1), 1 / len(CLASSES)))
-    return out[0], out[1]
+    isos = fit_calibrators(raw_val, y_val, w_val)
+    return apply_calibrators(isos, raw_val), apply_calibrators(isos, raw_test)
 
 
 def fit_primary(kind: str, names: list[str], d: dict, cfg) -> tuple[np.ndarray, np.ndarray, object, dict]:
@@ -108,8 +117,19 @@ def fit_primary(kind: str, names: list[str], d: dict, cfg) -> tuple[np.ndarray, 
         raw_v = model.predict_proba(d["X_val"])
         raw_t = model.predict_proba(d["X_test"]) if len(d["X_test"]) else np.zeros((0, len(CLASSES)))
         info = {"best_iteration": int(model.get_best_iteration() or 0)}
-    p_val, p_test = calibrate_multiclass(raw_v, d["y_val"], d["w_val"], raw_t)
-    return p_val, p_test, model, info
+    isos = fit_calibrators(raw_v, d["y_val"], d["w_val"])
+    info["calibrators"] = isos  # popped by callers that tabulate `info`
+    return apply_calibrators(isos, raw_v), apply_calibrators(isos, raw_t), model, info
+
+
+def class_codes(df: pl.DataFrame, side: str) -> np.ndarray:
+    """The side's label outcome as a class index (0 stop, 1 expiry, 2 take-profit)."""
+    return (
+        df[f"{side}_exit_reason"]
+        .replace_strict({c: i for i, c in enumerate(CLASSES)})
+        .cast(pl.Int8)
+        .to_numpy()
+    )
 
 
 def class_means(y: np.ndarray, net: np.ndarray) -> np.ndarray:
@@ -189,6 +209,8 @@ def fit_meta(train: pl.DataFrame, test: pl.DataFrame, cfg) -> tuple[np.ndarray, 
         "meta_best_iteration": it,
         "val_threshold": vthr,
         "shap": tree_shap("lgbm", model, Xt, len(META_INPUTS)),
+        "model": model,  # popped by callers that tabulate `info`
+        "calibrator": iso,
     }
     return p_test, info
 
@@ -216,13 +238,7 @@ def run(
     names = rung_features(PHASE6_RUNG)
     X = df.select(names).cast(pl.Float64).to_numpy()
     decision, arr, weights, eligible = prepare_arrays(df, cfg)
-    cls = {
-        s: df[f"{s}_exit_reason"]
-        .replace_strict({c: i for i, c in enumerate(CLASSES)})
-        .cast(pl.Int8)
-        .to_numpy()
-        for s in SIDES
-    }
+    cls = {s: class_codes(df, s) for s in SIDES}
     vol = df.select(META_VOL).cast(pl.Float64).to_numpy()
     rng = np.random.default_rng(shuffle_seed) if shuffle_seed is not None else None
     cands, shap_rows, info_rows = [], [], []
@@ -243,6 +259,7 @@ def run(
                 "X_val": X[m["val"]], "y_val": y[m["val"]], "w_val": weights[s][m["val"]], "X_test": X[test],
             }  # fmt: skip
             _, p_test, model, info = fit_primary(kind, names, d, cfg)
+            info.pop("calibrators")
             means = class_means(y[m["train"]], net[m["train"]])
             probs[s], e[s] = p_test, expected_r(p_test, means)
             info_rows.append(
@@ -300,6 +317,7 @@ def run(
         if tr.sum() < 2 or not te.any():
             continue
         p, info = fit_meta(cand.filter(tr), cand.filter(te), cfg)
+        info.pop("model"), info.pop("calibrator")
         meta_p[te] = p
         vthr[fold.index] = info.pop("val_threshold")
         shap_rows.append(

@@ -460,3 +460,48 @@ Implemented in `mbpe/validation/phase6.py`. Details the Phase 6 pre-registration
 - **Validation-chosen threshold** (reported alongside the fixed 0.60): the Phase 3 threshold rule on the meta-validation slice (maximum mean taker net R with ≥ 100 trades). If no candidate threshold qualifies, that fold has no trades.
 - **SHAP:** exact TreeSHAP computed by the libraries themselves (LightGBM `pred_contrib`, CatBoost `ShapValues`), as mean |SHAP| per feature over each test fold. Multiclass values are averaged over classes.
 - **Shuffled-label control:** per side, training and validation rows' (class, net R) pairs are permuted together, so the class means follow the shuffled labels. Test-fold outcomes are never shuffled, and the meta-model of a shuffled run trains on that run's own out-of-sample candidates. 20 permutations (seeds 0–19), for the headline (LightGBM).
+
+### Phase 6 Workstream D: live system definitions (fixed 2026-10-29, before the forward test starts)
+Implemented in `mbpe/live/`. These rules govern every forward-test decision and trade.
+
+**Data and timing**
+- **Decision time t:** each UTC hour boundary. The run starts at t + 3 min (`mbpe.live.run`).
+- **Features** at t use only data with timestamps before t, computed by the same registries as the backtest (`mbpe.live.features`) on:
+  - the archive clean layer (data.binance.vision, ingested daily; the source of record), plus a REST top-up of only closed bars newer than the archive (`mbpe.live.market`). The archive files are never modified;
+  - GDELT 15-minute batches available by t (batch label + 15 min), with news dedup extended incrementally (`dedup(..., fixed=...)`, shown identical to a full run for rows processed in time order) and FinBERT scoring of new titles (`mbpe.live.news`).
+- **Open-interest timestamps:** REST labels each 5-minute open-interest snapshot **5 minutes later** than the archive does. The values are identical: checked on 5 days of October 2026, every snapshot. Live rows are relabeled to the archive convention (REST time − 5 min), so live features equal the features the model was trained on, and REST and archive then match exactly.
+  - **Research timing caveat.** If REST's timestamp is the true observation time, the archive's `create_time` is 5 minutes early. The backtest rule "metrics with create_time < t" then admitted the snapshot observed **at** t, not strictly before it, in every phase.
+  - That snapshot is published within seconds of t, before the 1-minute entry, so the features were tradable. But the "strictly before t" convention was bent by at most the publication delay for the open-interest features (`oi_chg_*`, the OI/price quadrant).
+  - This could only have helped the backtests, which found no edge. It's reported as a limitation, not corrected retroactively.
+- **Staleness** (minutes from a source's last row to t, 1m bars counted from their close): futures, spot, mark and premium ≤ 5; metrics ≤ 20; funding ≤ 9 h.
+  - Beyond these, or if a meta-model volatility input is missing, the hour's decision is "none" (logged with the reason, plus an alert).
+  - Other missing features stay NaN, as in training. News coverage gating already turns GDELT outages into NaN.
+- **Late runs:** a run starting more than 15 min after t makes **no decision** for t. It could otherwise see data that arrived after t. Missed and late hours are recorded, never backfilled.
+
+**Model and log**
+- **Frozen model:** `mbpe.live.model.freeze` (artifact in `data/models/phase6/<version>/`).
+  - Version = sha256 of every fitted parameter. `load` refuses an artifact whose file hash doesn't match its manifest.
+  - Predictions use the artifact's threshold; the threshold choice for the forward test is decided in Workstream E.
+- **Prediction log:** `data/live/predictions.jsonl`, append-only, one record per t (a re-run for the same hour doesn't log twice). Each record has the model version, the class probabilities, expected net R, the candidate side, the meta P, the decision and its reason, per-source staleness, the missing features, and the sha256 of the feature vector.
+- **Feature snapshot:** the full feature row is stored in `data/live/features/<YYYY-MM>.parquet` for the parity check.
+
+**Paper executor** (`mbpe.live.paper`; no orders, no exchange keys)
+- **Settlement:** each trade is settled by the label set A label code itself:
+  - entry at the open of the 1m candle at t + 1 min; ±ATR(14, 1h) barriers;
+  - stop checked first; gap fills at the open; 4 h horizon;
+  - funding in (entry, exit]; taker costs, with maker_entry_tp reported.
+- **Timing of settlement:** a barrier hit within the candles seen so far is final, and a full 4 h without a hit is an expiry. With a candle gap or unpublished funding, the trade waits; it is never guessed.
+- **Position rule:** one position at a time; a new trade opens only at a decision time at or after the last exit, as in the backtest.
+- **Ledger:** `data/live/paper/ledger.jsonl`, append-only (open / close / skip).
+
+**Parity** (`mbpe.live.parity`, daily, on hours the archive now covers)
+- **Market features:** recomputed from the archive alone. **Tolerance:** |live − archive| ≤ 1e-9 × max(1, |archive|), or both missing.
+- **News, calendar and regulatory features:** recomputed with all news rows known at check time. Differences from late GDELT batches are expected and reported, not hidden.
+- **Decisions:** re-made by the same model version on the archive features; the agreement rate is reported.
+- **Paper trades:** must equal the label recomputed from archive candles and funding **exactly**. Any mismatch is treated as a bug: fixed, re-run, and both results reported.
+- **Reporting:** parity results are reported with the forward test.
+
+**Operations**
+- **Alerts and summary:** failed steps and stale sources go to `data/live/alerts.jsonl` and the log. A daily summary is written to `data/live/daily/`. External notifications (e-mail, chat) aren't wired in: sending messages needs your setup and consent.
+- **Scheduling examples (not installed):** `deploy/mbpe-live.cron`, `deploy/com.mbpe.live.plist`, `Dockerfile` + `docker-compose.yml`.
+- **CI** (`.github/workflows/ci.yml`): ruff, format check, the tests and the generated-table check. Tests needing local data skip themselves.

@@ -147,7 +147,7 @@ def unique_titles(rows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def score_all(cfg: NewsConfig) -> None:
+def score_all(cfg: NewsConfig, models: list[str] | None = None) -> None:
     """Score every exact-unique normalized title with every configured model (data/features/sentiment_*).
 
     Incremental and resumable: titles already in a model's file are skipped, progress is saved every CHUNK
@@ -158,6 +158,8 @@ def score_all(cfg: NewsConfig) -> None:
     titles = unique_titles(load_news_rows())
     print(f"{titles.height:,} unique titles", flush=True)
     for name, model_name in cfg.sentiment_models.items():
+        if models is not None and name not in models:  # live: only the scorer the features use
+            continue
         out = scores_path(name)
         done = pl.read_parquet(out) if out.exists() else None
         todo = titles if done is None else titles.join(done.select("norm"), on="norm", how="anti")

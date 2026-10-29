@@ -1,0 +1,23 @@
+# MBPE live system (Phase 6 Workstream D). Paper trading only: no exchange keys, no orders.
+# data/ is mounted from the host (archive, live store, models, logs). Start: docker compose up -d
+# Reddit/CryptoPanic collectors need credentials in an env file outside the repo (see docs/RUNBOOK.md).
+x-mbpe: &mbpe
+  build: .
+  restart: unless-stopped
+  volumes: ["./data:/app/data", "hf-cache:/cache/huggingface"]
+services:
+  live-hourly:  # decision for the hour that just closed, at minute 3
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.every", "--minute", "3", "--", "uv", "run", "python", "-m", "mbpe.live.run"]
+  ingest-daily:  # archive ingest + parity check, once a day
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.every", "--interval", "1440", "--", "sh", "-c",
+              "uv run python -m mbpe.ingest && uv run python -m mbpe.live.parity"]
+  rss:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.every", "--interval", "15", "--", "uv", "run", "python", "-m", "mbpe.sources.rss_live"]
+  liquidations:  # long-running WebSocket listener; restarts on exit
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.sources.liquidations_live"]
+volumes:
+  hf-cache:

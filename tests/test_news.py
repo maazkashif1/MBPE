@@ -164,3 +164,32 @@ def test_score_titles_scores_each_exact_unique_title_once():
     out = score_titles(df, scorer)
     assert scorer.seen == ["Fed & ECB hold rates", "Fed and ECB hold rates"]
     assert out["score"].to_list() == [0.25, 0.25, 0.25, None]
+
+
+def test_incremental_chunks_reproduce_a_full_run():
+    """Live use: each new day's rows, with the previous 48 h as fixed context, give the same as a full run."""
+    rng = np.random.default_rng(3)
+    start = datetime(2026, 10, 1)
+    items = []
+    for i in range(6 * 96):  # 6 days of 15-min batches
+        for _ in range(rng.integers(0, 3)):
+            story = (i // 30 + rng.integers(0, 5)) % 25  # stories drift and recur after > 24 h
+            when = int(f"{start + timedelta(minutes=15 * i):%Y%m%d%H%M%S}")
+            items.append((when, f"story {story} today" + "~" * rng.integers(0, 3)))
+    df = rows(items)
+    full = dedup(df, fake_embed, CFG).sort("DATE", "DocumentIdentifier")
+    store = None
+    for day in range(6):
+        lo = int(f"{start + timedelta(days=day - 2):%Y%m%d%H%M%S}")
+        hi = int(f"{start + timedelta(days=day + 1):%Y%m%d%H%M%S}")
+        chunk = df.filter((pl.col("DATE") >= lo) & (pl.col("DATE") < hi))
+        nxt = 0 if store is None else int(store["cluster_id"].max()) + 1
+        out = dedup(chunk, fake_embed, CFG, fixed=store, next_cluster_id=nxt)
+        new = out if store is None else out.join(store, on=["DATE", "DocumentIdentifier"], how="anti")
+        cols = ["DATE", "DocumentIdentifier", "cluster_id", "cluster_DATE", "match_sim"]
+        store = new.select(cols) if store is None else pl.concat([store, new.select(cols)])
+    inc = store.sort("DATE", "DocumentIdentifier")
+    assert inc.height == full.height
+    for c in ("cluster_id", "cluster_DATE", "match_sim"):
+        assert inc[c].equals(full[c]), c
+    assert full["cluster_id"].n_unique() < full.height  # merges happened, incl. across chunk boundaries

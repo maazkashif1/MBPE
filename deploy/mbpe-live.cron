@@ -1,0 +1,11 @@
+# MBPE live system (Phase 6 Workstream D). NOT installed. Paper trading only: no exchange keys, no orders.
+# Install with `crontab -e`; adjust MBPE_DIR and the uv path (`which uv`). Times are the machine's clock in UTC
+# here (set CRON_TZ=UTC where supported, or convert).
+CRON_TZ=UTC
+MBPE_DIR=/path/to/MBPE
+# hourly decision for the hour that just closed (data top-up, GDELT, features, frozen model, paper executor)
+3 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.live.run >> data/logs/live.log 2>&1
+# daily archive ingest (the source of record; the live store only covers what the archive hasn't published)
+30 2 * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.ingest >> data/logs/ingest_daily.log 2>&1
+# daily live/archive parity check on the hours the archive now covers
+45 3 * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.live.parity >> data/logs/parity.log 2>&1
