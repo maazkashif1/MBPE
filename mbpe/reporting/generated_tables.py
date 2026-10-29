@@ -825,6 +825,43 @@ def phase6_c_headline() -> str:
     return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
 
 
+def _tb_ci(r: dict) -> str:
+    return f"{fmt(r['mean_R'])} [{fmt(r['ci_lo'])}, {fmt(r['ci_hi'])}]"
+
+
+@block("test_b_replay")
+def test_b_replay() -> str:
+    path = R / "test_b/replay.json"
+    if not path.exists():
+        return "| | |\n|---|---|\n| status | not run yet |\n"
+    d = json.loads(path.read_text())
+    rows = [
+        (
+            "decisions / attempted / filled (fill rate)",
+            f"{d['decisions']:,} / {d['attempted']:,} / {d['filled']:,} "
+            f"({fmt(d['fill_rate'] * 100, 1, False)}%)",
+        ),
+        ("Test B mean net R [95% CI]", f"{_tb_ci(d['test_b'])} (n = {d['test_b']['n']:,})"),
+        (
+            "taker on the same orders: mean net R [95% CI]",
+            f"{_tb_ci(d['taker_same_orders'])} (n = {d['taker_same_orders']['n']:,})",
+        ),
+        (
+            "Test A walk-forward: mean net R [95% CI]",
+            f"{_tb_ci(d['test_a_walk_forward'])} (n = {d['test_a_walk_forward']['n']:,})",
+        ),
+        (
+            "always-long (limit orders): mean net R [95% CI]",
+            f"{_tb_ci(d['always_long'])} (n = {d['always_long']['filled']:,})",
+        ),
+        (
+            "busy skips / missing candles / excluded (no ATR)",
+            f"{d['busy_skips']:,} / {d['missing_candles']:,} / {d['excluded_atr']:,}",
+        ),
+    ]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows) + "\n"
+
+
 @block("phase6_c_configs")
 def phase6_c_configs() -> str:
     ov = _p6_ov()

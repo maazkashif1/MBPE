@@ -2145,3 +2145,10 @@ Built to the scope doc's weeks 6–7: a repeatable hourly inference workflow, lo
   - rows inside that range must all be covered;
   - later rows belong to the live store;
   - the research news feature rebuild stays byte-identical to the existing file.
+
+### Test B: limit orders (historical replay, development evidence)
+<!-- generated:test_b_replay -->
+| | |
+|---|---|
+| status | not run yet |
+<!-- /generated:test_b_replay -->

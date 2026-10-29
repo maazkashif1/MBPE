@@ -434,3 +434,10 @@ Built to the scope doc's integration and paper-trading-readiness stage (`mbpe/li
   - Pass = mean net R after taker costs > 0 with the 95% CI lower bound > 0, **and** above always-long over the same hours.
   - No change to the model, threshold or rules before then. A daily parity check compares the live system with the archive.
 - **Until the verdict, the finding stands:** no edge after costs.
+
+### Test B: limit orders (historical replay, development evidence)
+<!-- generated:test_b_replay -->
+| | |
+|---|---|
+| status | not run yet |
+<!-- /generated:test_b_replay -->
