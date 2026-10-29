@@ -263,6 +263,10 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Decided after seeing results, and stated plainly:** in Workstream C, the validation-threshold variant was the best LightGBM configuration but **still lost money after taker costs**. So the forward test has a negative historical expectation. It is a test of the scoped system as built, not of a candidate edge. The 0.60 variant is not forward-tested.
   - **Unchanged:** the model (LightGBM primary + meta-filter), the data, the live rules (Workstream D definitions), and the forward pass criterion (verdict only after ≥ 6 months **and** ≥ 100 trades; mean net R > 0 with the 95% CI lower bound > 0, and above always-long over the same period).
   - **Where it runs:** this Mac, via launchd. Hours missed while the Mac sleeps or is offline, and late runs, are recorded as no decision (Workstream D rules), which can delay reaching 100 trades.
+- **2026-10-29 (Phase 6 Workstream A): CryptoPanic dropped.**
+  - **Change:** the CryptoPanic API requires a paid plan, so under the free-only data decision it is removed from Phase 6. No collector is built.
+  - **Covered instead by:** the RSS collector (CoinDesk, Cointelegraph, The Block, Decrypt, Bitcoin Magazine), which provides crypto news headlines for free and is running.
+  - **Effect:** none on any result. CryptoPanic was forward-only data, in no model.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
