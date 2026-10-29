@@ -511,3 +511,19 @@ Implemented in `mbpe/live/`. These rules govern every forward-test decision and 
 - **Alerts and summary:** failed steps and stale sources go to `data/live/alerts.jsonl` and the log. A daily summary is written to `data/live/daily/`. External notifications (e-mail, chat) aren't wired in: sending messages needs your setup and consent.
 - **Scheduling examples (not installed):** `deploy/mbpe-live.cron`, `deploy/com.mbpe.live.plist`, `Dockerfile` + `docker-compose.yml`.
 - **CI** (`.github/workflows/ci.yml`): ruff, format check, the tests and the generated-table check. Tests needing local data skip themselves.
+
+### Phase 6 Workstream E: forward-test start record (2026-10-29, before the first forward decision)
+- **Frozen model:** version `f4c4365501a9272b` (`data/models/phase6/f4c4365501a9272b/`).
+  - `model.pkl` sha256 `0ca2321d0e10e3a0d6cdac733795f193f3950551622ae06742a68224af4e3780`.
+  - Frozen from commit 74fd70f, trained on data before 2026-04-26.
+  - The meta-model was trained on the 10,725 out-of-sample walk-forward candidates.
+- **Threshold:** meta P(success) ≥ **0.30909969344992666**, the validation-chosen threshold (amendment of 2026-10-29).
+- **First forward decision:** t = **2026-10-29 13:00 UTC**, run at 13:03 UTC by launchd on this Mac. Every hour from then on is a forward decision, recorded or recorded as missed or late.
+- **Records:**
+  - `data/live/predictions.jsonl` (decisions);
+  - `data/live/paper/ledger.jsonl` (paper trades);
+  - `data/live/features/` (inputs);
+  - `data/live/parity/` (daily parity);
+  - `data/live/alerts.jsonl`.
+- **Verdict:** only after both ≥ 6 months of forward decision times (not before 2027-04-29) **and** ≥ 100 closed paper trades. Pass = mean net R (taker) > 0 with the 95% block-bootstrap CI lower bound > 0, **and** above always-long's mean net R over the same forward decision hours (computed from the archive with the label code). Anything else: the negative finding stands.
+- **Interim reporting:** progress may be reported at any time (trade count, P&L so far, parity, data health), but **no verdict and no change to the model, threshold or rules before the verdict condition**. Any bug fix to the live system is made, logged in the amendments with its date, and its effect reported.
