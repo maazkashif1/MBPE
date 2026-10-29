@@ -20,3 +20,4 @@ service-account*.json
 client_secret*.json
 .config/gcloud/
 mlruns/
+.claude/

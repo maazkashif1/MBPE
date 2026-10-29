@@ -129,8 +129,10 @@ config/         evaluation protocol, label sets (A, B, P5), features, news
 reports/        committed results per phase (CSV / JSON): the source of every generated table
 tests/          leakage, labels, experiments, overfitting, live system, report consistency
 docs/           FINDINGS, PROGRESS, SCOPE, RUNBOOK, FEASIBILITY, REFERENCE_NOTES
-deploy/         cron / systemd / launchd examples (generic paths)
-Dockerfile, docker-compose.yml   container setup for the live system
+dashboard/      local web dashboard for the forward test (reads data/live/, writes nothing)
+ops/            running the live system
+                  jobs.sh (install / reload / stop / status / diff / logs for the launchd jobs),
+                  launchd/ (job templates), cron/, systemd/, docker/ (Dockerfile + compose.yml)
 ```
 
 ## Reproducing
@@ -176,6 +178,14 @@ The live system:
 uv run python -m mbpe.live.frozen_model freeze --threshold val        # frozen model -> data/models/phase6/<version>/
 uv run python -m mbpe.live.hourly_run --model data/models/phase6/<version>   # one hourly cycle
 uv run python -m mbpe.live.parity                              # live vs archive
+```
+
+Scheduling on macOS, and the dashboard (http://localhost:8765):
+
+```bash
+ops/jobs.sh install      # renders ops/launchd/*.plist into ~/Library/LaunchAgents and loads them
+ops/jobs.sh status
+uv run python -m dashboard.server   # or let the com.mbpe.dashboard job keep it running
 ```
 
 - The CryptoBERT comparison uses `config/news_cryptobert.yaml` and `mbpe.research.phase3_cryptobert` (`tune`, then `evaluate`).

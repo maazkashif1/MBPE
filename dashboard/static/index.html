@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MBPE Forward Test</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="glow glow-a"></div>
+  <div class="glow glow-b"></div>
+  <div class="glow glow-c"></div>
+
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <div>
+          <h1>MBPE</h1>
+          <p>Bitcoin prediction · practice money, no real trades</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span class="pill" id="status-pill"><span class="dot"></span><span id="status-text">Loading</span></span>
+        <span class="muted small" id="updated"></span>
+        <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">◐</button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card hero span-2">
+        <div class="card-head">
+          <h2>Profit / loss so far</h2>
+          <span class="badge" title="The system is judged only after 6 months and 100 trades">Early days · not a final result</span>
+        </div>
+        <div class="hero-figure" id="hero-net">—</div>
+        <p class="hero-sub" id="hero-sub">—</p>
+        <p class="fine" id="hero-r"></p>
+        <div class="hero-split">
+          <div><span class="label" title="If our orders had waited in the order book instead of paying the taker fee">With lower fees</span><span class="value" id="hero-maker">—</span></div>
+          <div><span class="label">Average per trade</span><span class="value" id="hero-mean">—</span></div>
+          <div><span class="label">Best / worst trade</span><span class="value" id="hero-bw">—</span></div>
+        </div>
+      </article>
+
+      <article class="card" id="position-card">
+        <div class="card-head"><h2>Current trade</h2><span class="badge" id="pos-side">—</span></div>
+        <div id="position-body"><p class="empty">No trade open right now.</p></div>
+      </article>
+
+      <article class="card kpi"><span class="label">Win rate</span><span class="kpi-value" id="kpi-winrate">—</span><span class="kpi-sub" id="kpi-wl">—</span></article>
+      <article class="card kpi"><span class="label">Money made on winners</span><span class="kpi-value" id="kpi-won">—</span><span class="kpi-sub" id="kpi-won-sub">—</span></article>
+      <article class="card kpi"><span class="label">Money lost on losers</span><span class="kpi-value" id="kpi-lost">—</span><span class="kpi-sub" id="kpi-lost-sub">—</span></article>
+      <article class="card kpi"><span class="label">Earned per $1 lost</span><span class="kpi-value" id="kpi-pf">—</span><span class="kpi-sub">above $1 means more won than lost</span></article>
+      <article class="card kpi"><span class="label">Biggest dip</span><span class="kpi-value" id="kpi-dd">—</span><span class="kpi-sub">largest fall from a high point</span></article>
+      <article class="card kpi"><span class="label">Finished trades</span><span class="kpi-value" id="kpi-closed">—</span><span class="kpi-sub" id="kpi-closed-sub">—</span></article>
+
+      <article class="card span-2 chart-card">
+        <div class="card-head"><h2>Practice account balance</h2><span class="muted small" id="equity-note"></span></div>
+        <div class="chart" id="equity"></div>
+        <div class="tooltip" id="tooltip" role="status"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h2>When will we know?</h2></div>
+        <div class="progress-block">
+          <div class="progress-label"><span>Time</span><span id="prog-days-text">—</span></div>
+          <div class="bar"><span id="prog-days"></span></div>
+        </div>
+        <div class="progress-block">
+          <div class="progress-label"><span>Finished trades</span><span id="prog-trades-text">—</span></div>
+          <div class="bar"><span id="prog-trades"></span></div>
+        </div>
+        <p class="fine">The system is judged only once both bars are full. It passes if it made money on average after fees, by a margin too large to be luck, and did better than simply betting on the price going up every time.</p>
+      </article>
+
+      <article class="card span-2">
+        <div class="card-head"><h2>Every hour</h2><span class="muted small" id="decision-summary"></span></div>
+        <div class="stat-row" id="decision-stats"></div>
+        <div class="cells" id="cells"></div>
+        <div class="legend">
+          <span><i class="cell-key trade"></i>Traded (U = up, D = down)</span>
+          <span><i class="cell-key none"></i>No trade</span>
+          <span><i class="cell-key warn"></i>Missed</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h2>System</h2><span class="muted small" id="next-run"></span></div>
+        <ul class="health" id="health"></ul>
+      </article>
+
+      <article class="card span-3">
+        <div class="card-head"><h2>Recent trades</h2><span class="muted small">each trade risks $100</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Opened</th><th>Bet</th><th class="num">Entry price</th><th class="num">Exit price</th><th>Why it closed</th><th class="num">Profit / loss</th><th>Result</th></tr></thead>
+            <tbody id="trades"><tr><td colspan="7" class="empty">No closed trades yet.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <footer class="footer muted small" id="footer">Paper trading only · no orders are placed.</footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

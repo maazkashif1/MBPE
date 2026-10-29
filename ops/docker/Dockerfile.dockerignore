@@ -1,0 +1,9 @@
+data
+reference
+.venv
+mlruns
+.git
+.claude
+.env
+.env.*
+**/__pycache__

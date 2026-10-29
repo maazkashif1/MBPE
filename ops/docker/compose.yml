@@ -1,0 +1,26 @@
+x-mbpe: &mbpe
+  build: {context: ../.., dockerfile: ops/docker/Dockerfile}
+  restart: unless-stopped
+  volumes: ["../../data:/app/data", "hf-cache:/cache/huggingface"]
+services:
+  live-hourly:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.scheduler", "--minute", "3", "--",
+              "uv", "run", "python", "-m", "mbpe.live.hourly_run", "--model", "data/models/phase6/f4c4365501a9272b"]
+  ingest-daily:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.scheduler", "--interval", "1440", "--", "sh", "-c",
+              "uv run python -m mbpe.data.ingest 2026-10-01 && uv run python -m mbpe.live.parity"]
+  rss:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.live.scheduler", "--interval", "15", "--",
+              "uv", "run", "python", "-m", "mbpe.data.rss"]
+  liquidations:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "mbpe.data.liquidations"]
+  dashboard:
+    <<: *mbpe
+    command: ["uv", "run", "python", "-m", "dashboard.server", "--host", "0.0.0.0", "--port", "8765"]
+    ports: ["127.0.0.1:8765:8765"]
+volumes:
+  hf-cache:

@@ -290,6 +290,12 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   | `mbpe/validation/{walk_forward, backtest, tuning, overfitting, phase4, phase5}.py` | `mbpe/research/` (same names) |
   | `mbpe/live/run.py`, `model.py`, `paper.py`, `news.py`, `every.py` | `mbpe/live/hourly_run.py`, `frozen_model.py`, `paper_trading.py`, `news_update.py`, `scheduler.py` |
   | `mbpe/reports/progress.py`, `mbpe/labeling/label.py` | `mbpe/reporting/generated_tables.py`, `mbpe/labeling/label_tool.py` |
+- **2026-10-29 (during the forward test): scheduling files moved to `ops/`; read-only dashboard added; no behaviour change.**
+  - **Change:**
+    - `deploy/*.cron` → `ops/cron/`; `deploy/*.service`, `*.timer` → `ops/systemd/`; `Dockerfile`, `docker-compose.yml` → `ops/docker/Dockerfile`, `compose.yml`;
+    - the launchd jobs running the forward test are kept as templates in `ops/launchd/`, installed by `ops/jobs.sh`. The rendered templates equal the installed jobs byte for byte;
+    - `dashboard/`: a local web page (localhost only) reading `data/live/`. It writes nothing and changes no decision.
+  - **Effect:** none on any result or on the forward test.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
@@ -536,7 +542,7 @@ Implemented in `mbpe/live/`. These rules govern every forward-test decision and 
 
 **Operations**
 - **Alerts and summary:** failed steps and stale sources go to `data/live/alerts.jsonl` and the log. A daily summary is written to `data/live/daily/`. External notifications (e-mail, chat) aren't wired in: sending messages needs your setup and consent.
-- **Scheduling examples (not installed):** `deploy/mbpe-live.cron`, `deploy/com.mbpe.live.plist`, `Dockerfile` + `docker-compose.yml`.
+- **Scheduling examples (not installed):** `deploy/mbpe-live.cron`, `deploy/com.mbpe.live.plist`, `Dockerfile` + `docker-compose.yml` (now in `ops/`, amendment of 2026-10-29).
 - **CI** (`.github/workflows/ci.yml`): ruff, format check, the tests and the generated-table check. Tests needing local data skip themselves.
 
 ### Phase 6 Workstream E: forward-test start record (2026-10-29, before the first forward decision)

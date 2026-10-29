@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.mbpe.liquidations</string>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>ProgramArguments</key><array><string>__UV__</string><string>run</string><string>python</string><string>-m</string><string>mbpe.data.liquidations</string></array>
+  <key>KeepAlive</key><true/><key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__REPO__/data/logs/liquidations.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/logs/liquidations.log</string>
+</dict>
+</plist>

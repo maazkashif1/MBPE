@@ -12,6 +12,7 @@ The live system makes one decision per UTC hour with the frozen Phase 6 model an
 | RSS headlines (forward-only data) | `uv run python -m mbpe.data.rss` | every 15 min |
 | Liquidations (forward-only data) | `uv run python -m mbpe.data.liquidations` | long-running |
 | Reddit (forward-only data) | `uv run python -m mbpe.data.reddit` | every 15 min, **only once credentials are set** |
+| Dashboard (read-only) | `uv run python -m dashboard.server` | long-running, http://localhost:8765 |
 
 The hourly run itself does the market top-up (Binance REST), the GDELT live collection, news dedup and FinBERT scoring, features, the decision, the logs and the paper executor.
 
@@ -22,11 +23,12 @@ The hourly run itself does the market top-up (Binance REST), the GDELT live coll
    - The GDELT history comes from the BigQuery backfill (`mbpe.data.gdelt_backfill`, needs your gcloud login).
    - Then build the labels and features as in the README.
 3. **Freeze the model:** `uv run python -m mbpe.live.frozen_model freeze [--threshold X]`. It writes `data/models/phase6/<version>/` with `manifest.json`. The forward test's threshold is decided in Workstream E; the default is the pre-registered 0.60.
-4. **Credentials** (only for the optional collectors): put `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` and the CryptoPanic key in an env file **outside the repo** (e.g. `~/.config/mbpe/reddit.env`, `chmod 600`). Never commit them; `.gitignore` covers `.env*`.
+4. **Credentials** (only for the optional collectors): put `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` in an env file **outside the repo** (e.g. `~/.config/mbpe/reddit.env`, `chmod 600`). Never commit them; `.gitignore` covers `.env*`.
 5. **Schedule**, choosing one of:
-   - cron: `deploy/mbpe-live.cron`, `deploy/rss-live.cron`;
-   - macOS launchd: `deploy/com.mbpe.live.plist`, `deploy/com.mbpe.liquidations.plist`;
-   - Docker: `docker compose up -d`, using `Dockerfile` and `docker-compose.yml`, with `data/` mounted.
+   - macOS launchd (what runs the forward test): `ops/jobs.sh install`. It renders `ops/launchd/*.plist` with this repo's path, your `uv` and the model (`MODEL=...` to override), writes them to `~/Library/LaunchAgents`, and loads them. The daily ingest is set to 02:30 UTC in local time;
+   - cron: `ops/cron/mbpe-live.cron`, `ops/cron/rss-live.cron`;
+   - systemd: `ops/systemd/`;
+   - Docker: `docker compose -f ops/docker/compose.yml up -d`, with `data/` mounted. The dashboard is published on 127.0.0.1:8765 only.
 
    **A sleeping laptop misses hours.** Missed and late hours are recorded as "no decision", never backfilled. An always-on machine or VM avoids this.
 
@@ -37,6 +39,20 @@ The hourly run itself does the market top-up (Binance REST), the GDELT live coll
   - Market features must be within tolerance.
   - Paper trades must equal the archive labels **exactly**. A mismatch is a bug: stop, investigate, fix, re-run, and report both.
 - **`data/logs/live.log`:** the full log of each run.
+
+## The launchd jobs
+| Command | What |
+|---|---|
+| `ops/jobs.sh status` | loaded or not, pid, last exit code |
+| `ops/jobs.sh reload [job ...]` | re-render and reload. Waits for a running hourly or ingest job to finish, and for the old job to unload, before loading the new one |
+| `ops/jobs.sh stop [job ...]` | unload (same waits) |
+| `ops/jobs.sh diff` | installed plists vs the templates |
+| `ops/jobs.sh logs [job ...]` | last 20 lines of each job's log |
+
+Jobs: `live`, `ingest`, `rss`, `liquidations`, `dashboard`. With no names, all of them.
+
+## Dashboard
+http://localhost:8765 shows the net result, win rate, profit and losses, profit factor, drawdown, the open position, the equity curve, progress to the verdict, the hourly decisions and the health of each job. It refreshes every 30 s, only reads `data/live/` and `data/raw/`, and listens on localhost only. Figures are interim, never a verdict.
 
 ## Files
 | Path | What |
@@ -56,4 +72,4 @@ The hourly run itself does the market top-up (Binance REST), the GDELT live coll
 - **`load` refuses a model**: `model.pkl` doesn't match its manifest hash. Re-freeze; don't edit artifacts.
 
 ## Stopping
-Stop the scheduler (remove the cron lines / `launchctl unload ...` / `docker compose down`). Logs, ledgers and predictions stay in `data/live/`.
+Stop the scheduler (`ops/jobs.sh stop` / remove the cron lines / `docker compose -f ops/docker/compose.yml down`). Logs, ledgers and predictions stay in `data/live/`.
