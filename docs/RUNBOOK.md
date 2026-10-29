@@ -60,6 +60,7 @@ http://localhost:8765 shows the net result, win rate, profit and losses, profit 
 | `data/live/predictions.jsonl` | one record per decision hour (append-only) |
 | `data/live/features/<YYYY-MM>.parquet` | the feature row behind each decision |
 | `data/live/paper/ledger.jsonl`, `state.json` | paper trades (append-only) and the open position |
+| `data/live/paper_b/ledger.jsonl`, `state.json` | Test B limit-order events (append-only) and the pending order |
 | `data/live/binance/*.parquet` | REST top-up newer than the archive (rebuilt each run; the archive is never modified) |
 | `data/live/news_dedup.parquet` | news clusters extended incrementally (the research file is never modified) |
 | `data/models/phase6/<version>/` | frozen model + manifest (version = hash of all fitted parameters) |

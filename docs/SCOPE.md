@@ -296,6 +296,7 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
     - the launchd jobs running the forward test are kept as templates in `ops/launchd/`, installed by `ops/jobs.sh`. The rendered templates equal the installed jobs byte for byte;
     - `dashboard/`: a local web page (localhost only) reading `data/live/`. It writes nothing and changes no decision.
   - **Effect:** none on any result or on the forward test.
+- **2026-10-29: Test B added to the hourly run as a separate `paper_b` step writing to `data/live/paper_b/`; Test A's code, files and behaviour are unchanged.**
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
