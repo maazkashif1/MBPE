@@ -1,24 +1,3 @@
-"""Market and derivatives features: one row per hourly decision time t.
-
-Timing: a feature at t uses only data with timestamps before t:
-- 1m candles that opened before t (so closed at or before t)
-- 5-min metrics with create_time < t
-- funding settlements with calc_time < t
-
-Rules (SCOPE.md):
-- levels (prices, open interest, funding): last value within a staleness limit, else NaN
-- flows (volume, taker volume): sums over the minutes present, never forward-filled, with coverage
-  features alongside
-- changes: NaN if either endpoint is stale
-- only relative values: returns, ratios, z-scores, distances in ATR units
-- excluded per SCOPE.md: top-trader ratios and metrics' taker ratio (taker flow comes from klines)
-
-Every feature is a pure function of the input context, registered with name, group (technical /
-derivatives; the group decides the ablation rung) and input datasets.
-
-Usage: uv run python -m mbpe.features.market   -> data/features/market.parquet + NaN report
-"""
-
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,11 +14,16 @@ from mbpe.labels.triple_barrier import atr_bars
 FEATURE_CONFIG = Path("config/features.yaml")
 MARKET_PATH = Path("data/features/market.parquet")
 CLEAN = Path("data/clean/binance")
-MIN, HOUR, DAY = 60_000, 3_600_000, 86_400_000  # milliseconds
+MIN, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 DATASETS = ("futures_klines_1m", "spot_klines_1m", "metrics", "funding", "mark_price_1m", "premium_index_1m")
-TS_COL = {"futures_klines_1m": "open_time", "spot_klines_1m": "open_time", "metrics": "create_time",
-          "funding": "calc_time",
-          "mark_price_1m": "open_time", "premium_index_1m": "open_time"}  # fmt: skip
+TS_COL = {
+    "futures_klines_1m": "open_time",
+    "spot_klines_1m": "open_time",
+    "metrics": "create_time",
+    "funding": "calc_time",
+    "mark_price_1m": "open_time",
+    "premium_index_1m": "open_time",
+}
 UTC_MS = pl.Datetime("ms", "UTC")
 
 
@@ -48,7 +32,7 @@ class FeatureConfig(BaseModel):
 
     staleness_minutes: dict[str, int]
     funding_z_min_settlements: int
-    premium_min_coverage: float  # Phase 6: share of a window's 1m premium-index bars required
+    premium_min_coverage: float
     vol_z_min_hours: int
     volume_profile_bin_pct: float
     value_area: float
@@ -62,12 +46,7 @@ def ms(col: pl.Series) -> np.ndarray:
     return col.cast(UTC_MS).dt.epoch("ms").to_numpy()
 
 
-# ---------- 1m market arrays ----------
-
-
 class Minutes:
-    """1m candles of one market as arrays, with prefix sums for window aggregates."""
-
     def __init__(self, df: pl.DataFrame):
         df = df.sort("open_time")
         self.t = ms(df["open_time"])
@@ -82,11 +61,9 @@ class Minutes:
         return np.concatenate([[0.0], np.cumsum(x)])
 
     def bounds(self, end: np.ndarray, length: int) -> tuple[np.ndarray, np.ndarray]:
-        """Index range of candles that opened in [end - length, end)."""
         return np.searchsorted(self.t, end - length, "left"), np.searchsorted(self.t, end, "left")
 
     def last_index(self, at: np.ndarray, stale_ms: int) -> tuple[np.ndarray, np.ndarray]:
-        """Index of the last candle closed by `at`, and whether it is within the staleness limit."""
         i = np.searchsorted(self.t, at, "left") - 1
         ok = (i >= 0) & (at - (self.t[np.maximum(i, 0)] + MIN) <= stale_ms)
         return np.maximum(i, 0), ok
@@ -101,23 +78,12 @@ def safe_div(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         return np.where(b != 0, a / np.where(b != 0, b, 1), np.nan)
 
 
-# ---------- context: inputs + shared intermediates ----------
-
-
 class Ctx:
-    """Inputs plus cached intermediates.
-
-    `hours` is the regular hourly sequence the data supports (first full hour .. last hour whose candles have
-    closed). `grid` holds the decision times to evaluate: all hours by default, or `at`, a subset of hours.
-    Features that depend on the hourly sequence (RSI, %B, 24 h extremes, 7-day baselines) are computed over
-    `hours` and then picked at `grid`, so the result doesn't depend on which times are evaluated.
-    """
-
     def __init__(self, data: dict[str, pl.DataFrame], cfg: FeatureConfig, at: np.ndarray | None = None):
         self.data, self.cfg = data, cfg
         fut_t = ms(data["futures_klines_1m"]["open_time"])
-        first = -(-fut_t.min() // HOUR) * HOUR  # first hour boundary at or after the first candle
-        last = ((fut_t.max() + MIN) // HOUR) * HOUR  # last hour boundary with its candles closed
+        first = -(-fut_t.min() // HOUR) * HOUR
+        last = ((fut_t.max() + MIN) // HOUR) * HOUR
         self.hours = np.arange(first + HOUR, last + 1, HOUR, dtype=np.int64)
         self.grid = self.hours if at is None else np.asarray(at, dtype=np.int64)
         self.pos = np.searchsorted(self.hours, self.grid)
@@ -130,7 +96,6 @@ class Ctx:
         self.memo: dict = {}
 
     def on_grid(self, x_hours: np.ndarray) -> np.ndarray:
-        """Pick values computed over `hours` at the decision times."""
         return x_hours[self.pos]
 
     @cached_property
@@ -150,7 +115,6 @@ class Ctx:
         return Minutes(self.data["premium_index_1m"])
 
     def price_at(self, at: np.ndarray) -> np.ndarray:
-        """Futures last close by `at` (level, staleness-limited)."""
         i, ok = self.fut.last_index(at, self.stale["price_1m"])
         return nan_where(ok, self.fut.c[i])
 
@@ -161,15 +125,12 @@ class Ctx:
     def window(
         self, x: np.ndarray, length: int, ends: np.ndarray | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
-        """(sum of x over futures candles opened in [t - length, t), number of those candles) per t in `ends`
-        (default: the decision times)."""
         p = Minutes.prefix(x)
         lo, hi = self.fut.bounds(self.grid if ends is None else ends, length)
         return p[hi] - p[lo], (hi - lo).astype(np.float64)
 
     @cached_property
     def bars(self) -> pl.DataFrame:
-        """1h futures bars ending at each of `hours` (null where the hour has no candles)."""
         b = (
             self.data["futures_klines_1m"]
             .sort("open_time")
@@ -180,7 +141,6 @@ class Ctx:
         return pl.DataFrame({"t": self.hours}).join(b, on="t", how="left")
 
     def atr(self, every: str) -> np.ndarray:
-        """Wilder ATR(14) of the latest `every` bar closed at or before t (same definition as the labels)."""
         a = atr_bars(self.data["futures_klines_1m"], every, 14).select(
             bar=pl.col("bar_close").dt.epoch("ms"), atr="atr"
         )
@@ -197,7 +157,6 @@ class Ctx:
 
     @cached_property
     def both(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Per futures minute: spot candle present?, its volume (0 if absent) and close (NaN if absent)."""
         j = np.searchsorted(self.spot.t, self.fut.t)
         jj = np.minimum(j, len(self.spot.t) - 1)
         present = (j < len(self.spot.t)) & (self.spot.t[jj] == self.fut.t)
@@ -205,8 +164,6 @@ class Ctx:
 
     @cached_property
     def oi(self) -> tuple[np.ndarray, np.ndarray]:
-        # OI <= 0 is a placeholder for a missing snapshot (481 rows, e.g. 2022-03-07): skip it, so the
-        # staleness limit decides whether the previous snapshot still counts
         m = self.data["metrics"].filter(pl.col("sum_open_interest") > 0).sort("create_time")
         return ms(m["create_time"]), m["sum_open_interest"].to_numpy().astype(np.float64)
 
@@ -221,14 +178,13 @@ class Ctx:
         f = self.data["funding"].sort("calc_time")
         return {
             "t": ms(f["calc_time"]),
-            "t_round": ms(f["calc_time"].dt.round("1m")),  # calc_time carries ms jitter
+            "t_round": ms(f["calc_time"].dt.round("1m")),
             "rate": f["last_funding_rate"].to_numpy().astype(np.float64),
             "interval": f["funding_interval_hours"].to_numpy().astype(np.int64) * HOUR,
         }
 
     @cached_property
     def funding_last(self) -> tuple[np.ndarray, np.ndarray]:
-        """(index of the last settlement before t, whether it is within interval + slack)."""
         f = self.funding
         i = np.searchsorted(f["t"], self.grid, "left") - 1
         ii = np.maximum(i, 0)
@@ -236,13 +192,10 @@ class Ctx:
         return ii, ok
 
 
-# ---------- registry ----------
-
-
 @dataclass(frozen=True)
 class Feature:
     name: str
-    group: str  # technical | derivatives | macd_ema (Phase 4) | mark_premium (Phase 6)
+    group: str
     inputs: tuple[str, ...]
     fn: Callable[[Ctx], np.ndarray]
 
@@ -263,8 +216,6 @@ def register(name: str, group: str, inputs: tuple[str, ...]):
 
 WINDOWS = {"1h": HOUR, "4h": 4 * HOUR, "24h": DAY, "7d": 7 * DAY}
 
-# --- technical: returns and volatility
-
 
 def _ret(ctx: Ctx, length: int) -> np.ndarray:
     return np.log(ctx.price / ctx.price_at(ctx.grid - length))
@@ -275,7 +226,6 @@ for _w in ("1h", "4h", "24h", "7d"):
 
 
 def _rv(ctx: Ctx, length: int) -> np.ndarray:
-    """Realized vol: sqrt(mean squared 1m log return x minutes in window), adjacent minutes only."""
     f = ctx.fut
     r = np.zeros(len(f.t))
     adjacent = np.r_[False, np.diff(f.t) == MIN]
@@ -295,7 +245,6 @@ register("atr_4h_pct", "technical", (FUT,))(lambda ctx: ctx.atr4h / ctx.price)
 
 @register("rsi_14_1h", "technical", (FUT,))
 def rsi_14_1h(ctx: Ctx) -> np.ndarray:
-    """Wilder RSI(14) on 1h closes (bars present, in time order), value of the bar ending at t."""
     b = ctx.bars.filter(pl.col("close").is_not_null())
     c = b["close"].to_numpy()
     d = np.diff(c, prepend=np.nan)
@@ -313,7 +262,6 @@ def rsi_14_1h(ctx: Ctx) -> np.ndarray:
 
 @register("bb_pctb_20_1h", "technical", (FUT,))
 def bb_pctb_20_1h(ctx: Ctx) -> np.ndarray:
-    """Bollinger %B(20, 2 sd) on 1h closes, bar ending at t."""
     b = ctx.bars.filter(pl.col("close").is_not_null()).with_columns(
         m=pl.col("close").rolling_mean(20), s=pl.col("close").rolling_std(20, ddof=0)
     )
@@ -328,12 +276,11 @@ def bb_pctb_20_1h(ctx: Ctx) -> np.ndarray:
 
 
 def _extreme(ctx: Ctx, col: str, fn) -> np.ndarray:
-    """Max/min of 1h bar highs/lows over the 24 bars ending at t (bars present)."""
     x = ctx.bars[col].fill_null(np.nan).to_numpy()
     pad = np.concatenate([np.full(23, np.nan), x])
     win = np.lib.stride_tricks.sliding_window_view(pad, 24)[ctx.pos]
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN window -> NaN
+        warnings.simplefilter("ignore", RuntimeWarning)
         return fn(win, axis=1)
 
 
@@ -344,8 +291,6 @@ register("dist_low_24h_atr", "technical", (FUT,))(
     lambda ctx: (ctx.price - _extreme(ctx, "low", np.nanmin)) / ctx.atr1h
 )
 
-# --- technical: volume and taker flow (flows: minutes present only)
-
 
 for _w in ("1h", "4h", "24h", "7d"):
     register(f"fut_cov_{_w}", "technical", (FUT,))(
@@ -355,7 +300,6 @@ for _w in ("1h", "4h", "24h", "7d"):
 
 @register("vol_z_7d", "technical", (FUT,))
 def vol_z_7d(ctx: Ctx) -> np.ndarray:
-    """log volume per present minute in the last hour, z-scored against the previous 168 hours."""
     v, n = ctx.window(ctx.fut.v, HOUR, ends=ctx.hours)
     with np.errstate(divide="ignore"):
         x = np.log(safe_div(v, n))
@@ -375,7 +319,6 @@ def _taker_ratio(ctx: Ctx, length: int) -> np.ndarray:
 
 
 def _cvd_norm(ctx: Ctx, length: int) -> np.ndarray:
-    """Taker buy - taker sell volume over the window, / (7-day volume per minute x window minutes)."""
     delta, _ = ctx.window(2 * ctx.fut.tbv - ctx.fut.v, length)
     v7, n7 = ctx.window(ctx.fut.v, 7 * DAY)
     return safe_div(delta, safe_div(v7, n7) * (length / MIN))
@@ -386,17 +329,7 @@ for _w in ("1h", "4h", "24h"):
     register(f"cvd_norm_{_w}", "technical", (FUT,))(lambda ctx, n=WINDOWS[_w]: _cvd_norm(ctx, n))
 
 
-# --- technical: volume profile, VWAP
-
-
 def _volume_profile(ctx: Ctx, length: int) -> tuple[np.ndarray, np.ndarray]:
-    """(distance of price from the point of control in ATR units, position in the value area).
-
-    Each 1m candle's volume goes to the bin of its typical price; bins are volume_profile_bin_pct of the price
-    at t. Value area (classic, contiguous): start at the point of control and keep adding the neighbouring
-    bin (just above or just below the current range) with more volume (ties: above) until the range holds
-    value_area of the volume.
-    """
     key = ("vp", length)
     if key in ctx.memo:
         return ctx.memo[key]
@@ -436,7 +369,6 @@ for _w in ("24h", "7d"):
 
 
 def _vwap_dist(ctx: Ctx, anchor: np.ndarray) -> np.ndarray:
-    """(price - VWAP since anchor) / ATR_1h, over futures candles opened in [anchor, t)."""
     f = ctx.fut
     pv, v = Minutes.prefix(f.tp * f.v), Minutes.prefix(f.v)
     lo, hi = np.searchsorted(f.t, anchor, "left"), np.searchsorted(f.t, ctx.grid, "left")
@@ -445,22 +377,19 @@ def _vwap_dist(ctx: Ctx, anchor: np.ndarray) -> np.ndarray:
 
 
 def _day_anchor(t: np.ndarray) -> np.ndarray:
-    return ((t - 1) // DAY) * DAY  # session containing the last closed minute; at 00:00 -> previous day
+    return ((t - 1) // DAY) * DAY
 
 
 def _week_anchor(t: np.ndarray) -> np.ndarray:
     d = _day_anchor(t)
-    return d - ((d // DAY + 3) % 7) * DAY  # 1970-01-01 was a Thursday; Monday = 0
+    return d - ((d // DAY + 3) % 7) * DAY
 
 
 register("vwap_day_dist_atr", "technical", (FUT,))(lambda ctx: _vwap_dist(ctx, _day_anchor(ctx.grid)))
 register("vwap_week_dist_atr", "technical", (FUT,))(lambda ctx: _vwap_dist(ctx, _week_anchor(ctx.grid)))
 
-# --- technical: spot vs perp
-
 
 def _spot_share(ctx: Ctx, length: int) -> np.ndarray:
-    """Spot share of spot + perp volume, over minutes where both markets have a candle."""
     present, sv, _ = ctx.both
     s, _ = ctx.window(sv, length)
     fv, _ = ctx.window(np.where(present, ctx.fut.v, 0.0), length)
@@ -476,7 +405,6 @@ for _w in ("1h", "4h"):
 
 @register("basis_spot_perp", "technical", (FUT, SPOT))
 def basis_spot_perp(ctx: Ctx) -> np.ndarray:
-    """(perp close - spot close) / spot close at the latest minute where both closed, staleness-limited."""
     present, _, sc = ctx.both
     idx = np.flatnonzero(present)
     j = np.searchsorted(ctx.fut.t[idx], ctx.grid, "left") - 1
@@ -488,8 +416,6 @@ def basis_spot_perp(ctx: Ctx) -> np.ndarray:
 register("hour_of_day", "technical", ())(lambda ctx: ((ctx.grid // HOUR) % 24).astype(np.float64))
 register("day_of_week", "technical", ())(lambda ctx: ((ctx.grid // DAY + 3) % 7 + 1).astype(np.float64))
 
-# --- derivatives
-
 
 @register("funding_last", "derivatives", (FUNDING,))
 def funding_last(ctx: Ctx) -> np.ndarray:
@@ -499,7 +425,6 @@ def funding_last(ctx: Ctx) -> np.ndarray:
 
 @register("funding_z_30d", "derivatives", (FUNDING,))
 def funding_z_30d(ctx: Ctx) -> np.ndarray:
-    """Last settled rate vs settlements with calc_time in [t - 30d, t)."""
     f = ctx.funding
     lo, hi = np.searchsorted(f["t"], ctx.grid - 30 * DAY, "left"), np.searchsorted(f["t"], ctx.grid, "left")
     s1, s2 = Minutes.prefix(f["rate"]), Minutes.prefix(f["rate"] ** 2)
@@ -530,10 +455,6 @@ OI_QUADRANTS = {
 
 
 def _oi_price_quadrant(ctx: Ctx, length: int) -> np.ndarray:
-    """Sign of price change x sign of OI change over the window, as a category 1-4 (OI_QUADRANTS).
-
-    A zero change counts as up. NaN if either change is missing. Treat as categorical when modeling.
-    """
     r, oi = _ret(ctx, length), _oi_chg(ctx, length)
     q = 1 + 2 * (r < 0) + (oi < 0)
     return np.where(np.isfinite(r) & np.isfinite(oi), q, np.nan)
@@ -546,16 +467,12 @@ for _w in ("1h", "4h", "24h"):
     )
 
 
-# --- mark_premium (Phase 6 Workstream A; SCOPE.md): mark price and premium index, 1m bars closed by t
-
-
 def _last_close(ctx: Ctx, m: Minutes) -> np.ndarray:
     i, ok = m.last_index(ctx.grid, ctx.stale["price_1m"])
     return nan_where(ok, m.c[i])
 
 
 def _premium_mean(ctx: Ctx, length: int, ends: np.ndarray) -> np.ndarray:
-    """Mean premium index (bps) of 1m bars opened in [t - length, t); NaN below premium_min_coverage."""
     m = ctx.premium
     p = Minutes.prefix(m.c)
     lo, hi = m.bounds(ends, length)
@@ -577,7 +494,6 @@ register("premium_mean_8h_bps", "mark_premium", (PREMIUM,))(
 
 @register("premium_z_7d", "mark_premium", (PREMIUM,))
 def premium_z_7d(ctx: Ctx) -> np.ndarray:
-    """1h mean premium, z-scored against the previous 168 hourly values (>= vol_z_min_hours present)."""
     x = _premium_mean(ctx, HOUR, ctx.hours)
     base = pl.DataFrame({"x": pl.Series(x).fill_nan(None)}).select(
         m=pl.col("x").shift(1).rolling_mean(168, min_samples=ctx.cfg.vol_z_min_hours),
@@ -587,15 +503,11 @@ def premium_z_7d(ctx: Ctx) -> np.ndarray:
     return ctx.on_grid(safe_div(x - m, sd))
 
 
-# --- macd_ema (Phase 4 rung 4a; SCOPE.md): MACD(12, 26, 9) and EMA distances on 1h closes, in ATR units
-
-
 def _ema(x: pl.Expr, n: int) -> pl.Expr:
-    return x.ewm_mean(alpha=2 / (n + 1), adjust=False)  # recursive from the first bar present
+    return x.ewm_mean(alpha=2 / (n + 1), adjust=False)
 
 
 def _macd_ema(ctx: Ctx) -> pl.DataFrame:
-    """MACD line/signal/histogram and close - EMA_n on the 1h bars present, at the decision times."""
     if "macd_ema" not in ctx.memo:
         c = pl.col("close")
         b = ctx.bars.filter(c.is_not_null()).with_columns(line=_ema(c, 12) - _ema(c, 26))
@@ -617,15 +529,11 @@ for _n in (20, 50, 200):
     register(f"ema{_n}_dist_atr", "macd_ema", (FUT,))(lambda ctx, n=_n: _per_atr(ctx, f"d{n}"))
 
 
-# ---------- build ----------
-
-
 def load_data(root: Path = CLEAN) -> dict[str, pl.DataFrame]:
     return {name: pl.read_parquet(root / f"{name}.parquet") for name in DATASETS}
 
 
 def truncate(data: dict[str, pl.DataFrame], t) -> dict[str, pl.DataFrame]:
-    """Only data with timestamps before t."""
     return {k: df.filter(pl.col(TS_COL[k]) < t) for k, df in data.items()}
 
 
@@ -635,15 +543,13 @@ def build_features(
     at: np.ndarray | None = None,
     names: list[str] | None = None,
 ) -> pl.DataFrame:
-    """Features at every supported hour, or only at the decision times `at` (epoch ms, hour boundaries)."""
     ctx = Ctx(data, cfg, at)
     cols = {n: np.asarray(REGISTRY[n].fn(ctx), dtype=np.float64) for n in (names or REGISTRY)}
     out = pl.DataFrame({"decision_time": pl.Series(ctx.grid).cast(UTC_MS), **cols})
-    return out.with_columns(pl.col(list(cols)).fill_nan(None))  # NaN -> null: one missing-value marker
+    return out.with_columns(pl.col(list(cols)).fill_nan(None))
 
 
 def nan_report(df: pl.DataFrame) -> pl.DataFrame:
-    """Share of missing values per feature per year (long format)."""
     feats = [c for c in df.columns if c != "decision_time"]
     return (
         df.group_by(year=pl.col("decision_time").dt.year())

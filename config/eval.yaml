@@ -1,4 +1,4 @@
-# Evaluation protocol (Phase 3; pre-registered in SCOPE.md). Loaded by mbpe.validation.walk_forward.load_eval_config.
+# Evaluation protocol (Phase 3; pre-registered in SCOPE.md). Loaded by mbpe.research.walk_forward.load_eval_config.
 eval_start: 2021-01-01T00:00:00Z
 holdout_start: 2026-04-26T00:00:00Z    # never evaluated without allow_holdout (logged)
 first_test_fold: 2022-01-01T00:00:00Z

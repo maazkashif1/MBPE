@@ -10,7 +10,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/uv</string><string>run</string><string>python</string>
-    <string>-m</string><string>mbpe.live.run</string>
+    <string>-m</string><string>mbpe.live.hourly_run</string>
   </array>
   <key>StartCalendarInterval</key><dict><key>Minute</key><integer>3</integer></dict>
   <key>StandardOutPath</key><string>/path/to/MBPE/data/logs/live.log</string>

@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from mbpe.sources.gdelt_bq import KEYWORDS, build_sql, match_keywords, year_ranges
+from mbpe.data.gdelt_backfill import KEYWORDS, build_sql, match_keywords, year_ranges
 
 
 @pytest.mark.parametrize(
@@ -21,9 +21,7 @@ from mbpe.sources.gdelt_bq import KEYWORDS, build_sql, match_keywords, year_rang
         ("US CPI beats forecasts as inflation cools", "", {"cpi", "inflation"}),
         ("Interest-rate decision looms", "", {"interest_rate"}),
         ("SEC sues crypto exchange", "", {"crypto", "sec_crypto"}),
-        # SEC alone doesn't count
         ("SEC fines bank over disclosures", "", set()),
-        # whole words only
         ("Cryptography conference opens", "", set()),
         ("Untethered: a memoir", "", set()),
         ("Bitcoinist launches newsletter", "", set()),
@@ -47,7 +45,6 @@ def test_sql_scans_only_needed_columns_and_partitions():
     assert "_PARTITIONTIME >= TIMESTAMP('2020-12-31')" in sql
     assert "_PARTITIONTIME < TIMESTAMP('2022-01-02')" in sql
     assert "DATE >= 20210101000000 AND DATE < 20220101000000" in sql
-    # Extras is only read to extract the title, never returned whole
     assert re.findall(r"\bExtras\b", sql) == ["Extras"]
     assert "REGEXP_EXTRACT(Extras, r'<PAGE_TITLE>(.*?)</PAGE_TITLE>')" in sql
     assert "V2Themes" not in sql

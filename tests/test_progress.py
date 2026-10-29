@@ -1,15 +1,15 @@
-"""Generated result tables in PROGRESS.md / reports/FINDINGS.md must match their committed sources."""
-
 import pytest
 
-from mbpe.reports.progress import BLOCKS, DOCS, MARK, mismatches
+from mbpe.reporting.generated_tables import BLOCKS, DOCS, MARK, mismatches
 
 
 @pytest.mark.parametrize("doc", DOCS, ids=lambda p: p.name)
 def test_generated_tables_match_their_sources(doc):
     assert doc.exists(), doc
     bad = mismatches(doc)
-    assert not bad, f"{doc}: out-of-date generated tables {bad}; run: uv run python -m mbpe.reports.progress"
+    assert not bad, (
+        f"{doc}: out-of-date generated tables {bad}; run: uv run python -m mbpe.reporting.generated_tables"
+    )
 
 
 def test_every_registered_table_is_used():

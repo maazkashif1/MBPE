@@ -1,24 +1,23 @@
-"""Phase 4 features: order book (bookDepth) and NFP calendar; bookDepth clean pivot.
-
-Leakage: for >= 200 random decision times t, features from the order book truncated at t (snapshots
-before t) must equal features from the full order book. The NFP calendar is a schedule known in advance,
-as for CPI/FOMC.
-"""
-
 from datetime import UTC, datetime
 
 import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.features.market import HOUR, MIN, UTC_MS
-from mbpe.features.phase4 import BOOK_STALE, PHASE4_REGISTRY, P4Feature, build_phase4_features, load_book
-from mbpe.storage.clean import (
+from mbpe.data.clean import (
     BOOK_BANDS,
     BOOK_COLUMNS,
     ConflictingDuplicatesError,
     book_depth_wide,
     clean_path,
+)
+from mbpe.features.market import HOUR, MIN, UTC_MS
+from mbpe.features.nfp_and_orderbook import (
+    BOOK_STALE,
+    PHASE4_REGISTRY,
+    P4Feature,
+    build_phase4_features,
+    load_book,
 )
 
 START = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
@@ -26,10 +25,9 @@ SEC = 1000
 
 
 def synthetic_book(days: int = 20, seed: int = 0) -> pl.DataFrame:
-    """Snapshots every ~30 s (jitter), a missing day, a 3-minute gap, a 90-second gap, a few null bands."""
     rng = np.random.default_rng(seed)
     t = START + np.cumsum(rng.integers(28, 33, days * 2880)) * SEC
-    keep = ~((t >= START + 5 * 86_400_000) & (t < START + 6 * 86_400_000))  # day 5 missing
+    keep = ~((t >= START + 5 * 86_400_000) & (t < START + 6 * 86_400_000))
     keep &= ~((t > START + 2 * 86_400_000 + 10 * HOUR - 3 * MIN) & (t < START + 2 * 86_400_000 + 10 * HOUR))
     keep &= ~((t > START + 3 * 86_400_000 + 7 * HOUR - 90 * SEC) & (t < START + 3 * 86_400_000 + 7 * HOUR))
     t = t[keep]
@@ -80,7 +78,6 @@ def test_every_feature_has_a_phase4_group():
 def test_no_leakage_synthetic_book():
     gaps = [START + 2 * 86_400_000 + 10 * HOUR, START + 3 * 86_400_000 + 7 * HOUR, START + 6 * 86_400_000]
     gaps += [g + HOUR for g in gaps]
-    # times within 7 days after the missing day exercise the median's minimum count
     assert_no_leakage(
         synthetic_book(), times(200, seed=1, extra=[g for g in gaps if g >= START + 8 * 86_400_000])
     )
@@ -93,9 +90,7 @@ def test_staleness_limit_and_strictly_before_t():
     exact = book.tail(1).with_columns(timestamp=pl.lit(t - BOOK_STALE).cast(UTC_MS))
     at_t = book.tail(1).with_columns(timestamp=pl.lit(t).cast(UTC_MS), bid_depth_20bp=pl.lit(1e9))
     f = build_phase4_features(pl.concat([book, exact, at_t]), NFP, np.array([t]))
-    assert (
-        f["book_imbalance_20bp"][0] is not None and f["book_imbalance_20bp"][0] < 0.99
-    )  # t's snapshot unused
+    assert f["book_imbalance_20bp"][0] is not None and f["book_imbalance_20bp"][0] < 0.99
     late = exact.with_columns(timestamp=pl.lit(t - BOOK_STALE - 1).cast(UTC_MS))
     g = build_phase4_features(pl.concat([book, late]), NFP, np.array([t]))
     assert all(g[n][0] is None for n, ft in PHASE4_REGISTRY.items() if ft.group == "orderbook")
@@ -103,13 +98,13 @@ def test_staleness_limit_and_strictly_before_t():
 
 def test_values_on_a_hand_built_book():
     hours = np.arange(START - 170 * HOUR, START + HOUR, HOUR)
-    snaps = hours - 30 * SEC  # one snapshot 30 s before every hour
+    snaps = hours - 30 * SEC
     d = {c: np.ones(len(snaps)) for c in BOOK_COLUMNS}
     d["bid_depth_20bp"], d["ask_depth_20bp"] = np.full(len(snaps), 3.0), np.full(len(snaps), 1.0)
-    d["bid_depth_500bp"] = np.arange(len(snaps), dtype=float) + 1  # total D = bid + 1
+    d["bid_depth_500bp"] = np.arange(len(snaps), dtype=float) + 1
     book = pl.DataFrame({"timestamp": snaps, **d}).with_columns(pl.col("timestamp").cast(UTC_MS))
     f = build_phase4_features(book, NFP, np.array([START])).row(0, named=True)
-    n = len(snaps)  # D at START is n + 1; at START - 1h is n; previous 168 values are n - 167 .. n
+    n = len(snaps)
     assert f["book_imbalance_20bp"] == pytest.approx(0.5)
     assert f["book_imbalance_100bp"] == pytest.approx(0.0)
     assert f["book_depth_chg_1h"] == pytest.approx(np.log((n + 1) / n))
@@ -141,7 +136,7 @@ def test_no_leakage_real_book_slice():
     lo, hi = (
         datetime(2024, 4, 10, tzinfo=UTC),
         datetime(2024, 4, 26, tzinfo=UTC),
-    )  # includes missing 2024-04-18
+    )
     book = load_book().filter(pl.col("timestamp").is_between(lo, hi, closed="left"))
     hours = np.arange(int(lo.timestamp() * 1000) + 8 * 86_400_000, int(hi.timestamp() * 1000), HOUR)
     gap = int(datetime(2024, 4, 18, tzinfo=UTC).timestamp() * 1000)
@@ -155,9 +150,9 @@ def test_book_depth_pivot():
     rows = [(ts, -b, 1.0 + b, 10.0) for b in BOOK_BANDS] + [(ts, b, 2.0, 20.0) for b in BOOK_BANDS[:-1]]
     long = pl.DataFrame(rows, schema=["timestamp", "percentage", "depth", "notional"], orient="row")
     long = long.with_columns(pl.col("timestamp").cast(UTC_MS))
-    w = book_depth_wide(pl.concat([long, long.head(2)]))  # exact duplicates dropped
+    w = book_depth_wide(pl.concat([long, long.head(2)]))
     assert w.columns == ["timestamp", *BOOK_COLUMNS] and w.height == 1
-    assert w["bid_depth_20bp"][0] == 1.2 and w["ask_depth_500bp"][0] is None  # absent band -> null
+    assert w["bid_depth_20bp"][0] == 1.2 and w["ask_depth_500bp"][0] is None
     clash = long.head(1).with_columns(depth=pl.lit(9.0))
     with pytest.raises(ConflictingDuplicatesError):
         book_depth_wide(pl.concat([long, clash]))

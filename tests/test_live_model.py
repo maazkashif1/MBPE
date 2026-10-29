@@ -1,15 +1,13 @@
-"""Frozen model: deterministic version, predictions identical to the research code, tamper check."""
-
 from datetime import UTC, datetime
 
 import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.live import model as lmod
-from mbpe.validation import phase6 as p6
-from mbpe.validation.harness import PHASE6_RUNG, SIDES, prepare_arrays, rung_features
-from mbpe.validation.walk_forward import Fold, split, to_ms
+from mbpe.live import frozen_model as lmod
+from mbpe.research import phase6_models as p6
+from mbpe.research.experiment import PHASE6_RUNG, SIDES, prepare_arrays, rung_features
+from mbpe.research.walk_forward import Fold, split, to_ms
 from tests.test_phase6 import synthetic_dataset
 
 
@@ -35,7 +33,7 @@ def frozen(tmp_path_factory):
 
 def test_freeze_is_deterministic_and_trained_before_the_holdout(frozen):
     cfg, _, a, b = frozen
-    assert a.name == b.name  # same fitted parameters -> same version
+    assert a.name == b.name
     fz = lmod.load(a)
     h = to_ms(cfg.holdout_start)
     for s in SIDES:
@@ -57,9 +55,14 @@ def test_predict_equals_the_research_code(frozen):
         m = split(decision, arr[s]["exit"], fold, cfg)
         y = p6.class_codes(df, s)
         d = {
-            "X_train": X[m["train"]], "y_train": y[m["train"]], "w_train": weights[s][m["train"]],
-            "X_val": X[m["val"]], "y_val": y[m["val"]], "w_val": weights[s][m["val"]], "X_test": X[rows],
-        }  # fmt: skip
+            "X_train": X[m["train"]],
+            "y_train": y[m["train"]],
+            "w_train": weights[s][m["train"]],
+            "X_val": X[m["val"]],
+            "y_val": y[m["val"]],
+            "w_val": weights[s][m["val"]],
+            "X_test": X[rows],
+        }
         _, p_ref, _, _ = p6.fit_primary("lgbm", names, d, cfg)
         for i, r in enumerate(rows):
             got = lmod.predict(fz, df[int(r)], eligible=True)["probs"][s]
@@ -81,5 +84,5 @@ def test_freeze_with_the_validation_threshold(frozen, tmp_path):
     cfg, df, a, _ = frozen
     fz_default = lmod.load(a)
     v = lmod.load(lmod.freeze("val", root=tmp_path, cfg=cfg, df=df))
-    assert v.version == fz_default.version  # same fitted parameters; only the cutoff differs
+    assert v.version == fz_default.version
     assert v.threshold == fz_default.val_threshold and v.threshold == v.manifest["val_threshold"]

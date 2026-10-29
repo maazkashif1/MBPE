@@ -2,4 +2,4 @@
 # Install with `crontab -e` and adjust MBPE_DIR and the uv path (`which uv`). Times are the machine's clock;
 # the collector itself works in UTC.
 MBPE_DIR=/path/to/MBPE
-2,17,32,47 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.sources.gdelt_live >> data/logs/gdelt_live.log 2>&1
+2,17,32,47 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.data.gdelt_live >> data/logs/gdelt_live.log 2>&1

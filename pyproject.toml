@@ -30,7 +30,7 @@ dev = [
 
 [tool.ruff]
 line-length = 110
-extend-exclude = ["reference", "feasibility.py"]
+extend-exclude = ["reference", "scripts/feasibility.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

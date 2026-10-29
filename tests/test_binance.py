@@ -4,8 +4,8 @@ import pandera.polars as pa
 import polars as pl
 import pytest
 
-from mbpe.sources.binance import UTC_MS, parse_csv
-from mbpe.storage.clean import ConflictingDuplicatesError, dedupe, gap_report, null_runs, validate
+from mbpe.data.binance_archive import UTC_MS, parse_csv
+from mbpe.data.clean import ConflictingDuplicatesError, dedupe, gap_report, null_runs, validate
 
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
 KLINE_HEADER = (
@@ -60,13 +60,13 @@ def test_spot_microsecond_timestamps_match_milliseconds():
 )
 def test_schema_rejects_unsorted_or_duplicate_timestamps(bad):
     df = klines([0, 1, 2])
-    validate("futures_klines_1m", df)  # sanity: the good frame passes
+    validate("futures_klines_1m", df)
     with pytest.raises(pa.errors.SchemaErrors):
         validate("futures_klines_1m", bad(df))
 
 
 def test_gap_report_finds_synthetic_gap():
-    df = klines([0, 1, 2, 7, 8])  # minutes 3..6 missing
+    df = klines([0, 1, 2, 7, 8])
     gaps = gap_report("futures_klines_1m", df)
     assert gaps.height == 1
     row = gaps.row(0, named=True)
@@ -94,13 +94,13 @@ def test_null_runs_finds_blank_stretches():
 def test_rest_funding_months_merge_and_cross_check(tmp_path):
     import json
 
-    from mbpe.storage.clean import FundingMismatchError, merge_funding_rest
+    from mbpe.data.clean import FundingMismatchError, merge_funding_rest
 
     sep30_00, sep30_08, oct01_16 = (
         1790726400002,
         1790755200001,
         1790870400003,
-    )  # epoch ms, with Binance's jitter
+    )
 
     def rest_file(month, rows):
         f = tmp_path / f"BTCUSDT-fundingRate-{month}.json"
@@ -121,7 +121,7 @@ def test_rest_funding_months_merge_and_cross_check(tmp_path):
     same = rest_file("2026-09", [row(sep30_00, "0.00007"), row(sep30_08, "0.00004")])
     new = rest_file("2026-10", [row(oct01_16, "0.00006980")])
     out = merge_funding_rest(archive, [same, new])
-    assert out["source"].to_list() == ["archive", "archive", "rest"]  # archive wins for its own months
+    assert out["source"].to_list() == ["archive", "archive", "rest"]
     assert out["last_funding_rate"][2] == 6.98e-5
 
     differ = rest_file("2026-09", [row(sep30_00, "0.00007"), row(sep30_08, "0.00004001")])

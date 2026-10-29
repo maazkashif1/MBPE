@@ -1,39 +1,12 @@
-"""News and calendar features: one row per hourly decision time t.
-
-News (group "news"):
-- Every input goes through availability: a row counts at t only if its batch label (DATE) + 15 min <= t, the
-  same rule as gdelt_bq.news_as_of. Coverage batches likewise.
-- Computed separately for the crypto and macro keyword groups. A row with keywords from both groups counts in
-  both.
-- Windows end at t: (t - W, t] in availability time.
-- Coverage = share of the window's 15-min batches that GDELT published (from the coverage table). A window
-  below `min_coverage` makes every feature of that window NaN, never zero. An outage is no data, not no news.
-- Sentiment counts each near-duplicate cluster once: the mean score of its scored titles available by t, for
-  clusters with a title in the window. Syndicated copies don't outweigh single stories. Empty titles count
-  toward volume only (no score, no tone).
-- The sentiment model is `default_sentiment` in config/news.yaml; switching models is a config change.
-
-Regulatory (group "regulatory", Phase 6): new near-duplicate clusters among crypto-group rows whose title
-matches REGULATORY_PATTERN (regulatory actions) or MAJOR_PATTERN (major announcements: hacks, bankruptcies,
-halving, ...), per window, with the same availability and coverage gating as the news features. The keyword
-lists are fixed in SCOPE.md (Phase 6, Workstream A definitions) before any Phase 6 model.
-
-Calendar (group "calendar"): from data/reference/macro_events.csv (US CPI releases and FOMC statements at
-their actual UTC times; see SCOPE.md for the rescheduling limitation).
-
-Usage: uv run python -m mbpe.features.news [CONFIG]   (default config/news.yaml -> data/features/news.parquet;
-       config/news_cryptobert.yaml -> data/features/news_cryptobert.parquet) + missingness report
-"""
-
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from mbpe.features.dedup import NewsConfig, load_news_config, normalize_title
+from mbpe.data.gdelt_backfill import AVAILABILITY_LAG, CRYPTO_KEYWORDS, MACRO_KEYWORDS
 from mbpe.features.market import DAY, HOUR, MIN, UTC_MS, Feature, safe_div
-from mbpe.sources.gdelt_bq import AVAILABILITY_LAG, CRYPTO_KEYWORDS, MACRO_KEYWORDS
+from mbpe.features.news_dedup import NewsConfig, load_news_config, normalize_title
 
 NEWS_PATH = Path("data/features/news.parquet")
 DEDUP_PATH = Path("data/features/news_dedup.parquet")
@@ -44,7 +17,6 @@ GROUPS = ("crypto", "macro")
 WINDOWS = {"1h": HOUR, "4h": 4 * HOUR, "24h": DAY}
 NEWS_INPUTS = ("gdelt_rows", "gdelt_coverage", "news_dedup", "sentiment")
 CAL_INPUTS = ("macro_events",)
-# Phase 6 regulatory / major-announcement flags on titles (word boundaries; acronyms case-sensitive)
 REGULATORY_PATTERN = (
     r"\b(?:SEC|CFTC|ETFs?)\b|(?i:\b(?:regulators?|regulatory|regulations?|regulated?|regulates|lawsuits?|sues?|sued|"
     r"indict(?:ed|ment)?|fined|bans?|banned|crackdown|enforcement|legislation|lawmakers|congress|senate|"
@@ -61,15 +33,10 @@ def label_ms(col: str = "DATE") -> pl.Expr:
 
 
 def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | None) -> pl.DataFrame:
-    """One row per article with availability time, group flags, cluster info, sentiment score and tone.
-
-    rows: BACKFILL_SCHEMA. clusters: DATE, DocumentIdentifier, cluster_id, match_sim (dedup output).
-    scores: norm, score (None -> no sentiment). Sorted by availability.
-    """
     key = ["DATE", "DocumentIdentifier"]
     df = rows.join(clusters.select(*key, "cluster_id", "match_sim"), on=key, how="left")
     if (missing := df["cluster_id"].null_count()) > 0:
-        raise ValueError(f"{missing} rows have no dedup cluster; re-run mbpe.features.dedup")
+        raise ValueError(f"{missing} rows have no dedup cluster; re-run mbpe.features.news_dedup")
     df = df.with_columns(
         avail=label_ms() + LAG,
         crypto=pl.col("keywords").list.eval(pl.element().is_in(list(CRYPTO_KEYWORDS))).list.any(),
@@ -86,7 +53,6 @@ def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | N
         df = df.join(scores.select("norm", "score"), on="norm", how="left")
     else:
         df = df.with_columns(score=pl.lit(None, pl.Float64))
-    # empty titles: volume only
     df = df.with_columns(
         score=pl.when(pl.col("empty")).then(None).otherwise("score"),
         tone=pl.when(pl.col("empty")).then(None).otherwise("tone"),
@@ -97,7 +63,6 @@ def prepare(rows: pl.DataFrame, clusters: pl.DataFrame, scores: pl.DataFrame | N
 
 
 def load_calendar(path: Path = CALENDAR_PATH, events: tuple[str, ...] = ("CPI", "FOMC")) -> np.ndarray:
-    """Sorted UTC epoch-ms times of the given events (released or scheduled); default CPI + FOMC (Phase 3)."""
     ev = pl.read_csv(path).filter(pl.col("event").is_in(list(events)) & (pl.col("release_utc").is_not_null()))
     t = ev.select(pl.col("release_utc").str.strptime(UTC_MS, "%Y-%m-%d %H:%M").dt.epoch("ms"))["release_utc"]
     return np.sort(t.to_numpy())
@@ -136,11 +101,9 @@ class NewsCtx:
         self.memo: dict = {}
 
     def on_grid(self, x_hours: np.ndarray) -> np.ndarray:
-        """Pick values computed over `hours` at the decision times."""
         return x_hours[self.pos]
 
     def rows_in(self, ends: np.ndarray, length: int) -> tuple[np.ndarray, np.ndarray]:
-        """Index range of rows with availability in (end - length, end]."""
         return np.searchsorted(self.a, ends - length, "right"), np.searchsorted(self.a, ends, "right")
 
     def count(self, x: np.ndarray, length: int, ends: np.ndarray | None = None) -> np.ndarray:
@@ -150,7 +113,6 @@ class NewsCtx:
         return (p[hi] - p[lo]).astype(np.float64)
 
     def coverage(self, length: int, ends: np.ndarray | None = None) -> np.ndarray:
-        """Share of the window's 15-min batches that were published (availability in (end - length, end])."""
         ends = self.grid if ends is None else ends
         n = np.searchsorted(self.batch_avail, ends, "right") - np.searchsorted(
             self.batch_avail, ends - length, "right"
@@ -161,11 +123,6 @@ class NewsCtx:
         return self.coverage(length) >= self.cfg.min_coverage
 
     def cluster_stats(self, g: str, length: int, values: str) -> dict[str, np.ndarray]:
-        """Per t: mean, std and strong-negative share over clusters with a `values` row in the window.
-
-        A cluster's value is the mean of its group rows with a value available by t. Clusters close 24 h after
-        their first member, so every such row is available within (t - length - cap, t].
-        """
         key = (g, length, values)
         if key in self.memo:
             return self.memo[key]
@@ -194,8 +151,6 @@ class NewsCtx:
         self.memo[key] = out
         return out
 
-
-# ---------- registry ----------
 
 NEWS_REGISTRY: dict[str, Feature] = {}
 
@@ -244,10 +199,9 @@ for _g in GROUPS:
 
     @register(f"news_{_g}_count_z_4h", "news", NEWS_INPUTS)
     def _count_z(ctx: NewsCtx, g: str = _g) -> np.ndarray:
-        """4h article count (scaled to full coverage) vs the previous 168 hourly values (NaN-skipping)."""
         c = ctx.count(ctx.mask[g], 4 * HOUR, ends=ctx.hours)
         cov = ctx.coverage(4 * HOUR, ends=ctx.hours)
-        x = np.where(cov >= ctx.cfg.min_coverage, safe_div(c, cov), np.nan)  # count scaled to full coverage
+        x = np.where(cov >= ctx.cfg.min_coverage, safe_div(c, cov), np.nan)
         need = int(np.ceil(ctx.cfg.min_coverage * 168))
         s = pl.DataFrame({"x": pl.Series(x).fill_nan(None)}).select(
             m=pl.col("x").shift(1).rolling_mean(168, min_samples=need),
@@ -262,8 +216,6 @@ for _w in ("4h", "24h"):
         lambda ctx, n=WINDOWS[_w]: ctx.cluster_stats("macro", n, "tone")["mean"]
     )
 
-
-# --- regulatory (Phase 6): new clusters with a regulatory / major-announcement title, gated by coverage
 
 for _f, _ws in (("reg", ("1h", "4h", "24h")), ("major", ("4h", "24h"))):
     for _w in _ws:
@@ -287,13 +239,11 @@ def _next_event(ctx: NewsCtx) -> np.ndarray:
 
 @register("cal_hours_to_next_event", "calendar", CAL_INPUTS)
 def cal_hours_to_next_event(ctx: NewsCtx) -> np.ndarray:
-    """Hours until the next CPI release or FOMC statement strictly after t."""
     return _next_event(ctx)
 
 
 @register("cal_hours_since_last_event", "calendar", CAL_INPUTS)
 def cal_hours_since_last_event(ctx: NewsCtx) -> np.ndarray:
-    """Hours since the last CPI release or FOMC statement at or before t."""
     i = np.searchsorted(ctx.events, ctx.grid, "right") - 1
     return np.where(i >= 0, (ctx.grid - ctx.events[np.maximum(i, 0)]) / HOUR, np.nan)
 
@@ -302,9 +252,6 @@ def cal_hours_since_last_event(ctx: NewsCtx) -> np.ndarray:
 def cal_event_next_4h(ctx: NewsCtx) -> np.ndarray:
     nxt = _next_event(ctx)
     return np.where(np.isfinite(nxt), (nxt <= 4).astype(np.float64), np.nan)
-
-
-# ---------- build ----------
 
 
 def build_news_features(
@@ -328,12 +275,9 @@ class NewsInputs:
 
 
 def load_inputs(cfg: NewsConfig, require_scores: bool = True, dedup_path: Path = DEDUP_PATH) -> NewsInputs:
+    from mbpe.data.gdelt_live import load_coverage, load_news_rows
     from mbpe.features.sentiment import scores_path, unique_titles
-    from mbpe.sources.gdelt_live import load_coverage, load_news_rows
 
-    # Use rows (and coverage) up to the last batch the dedup store has processed. Rows inside that range
-    # must all have clusters (prepare() raises otherwise: re-run dedup); later rows belong to a newer store
-    # (the live one), so a research rebuild stays reproducible while live collection continues.
     clusters = pl.read_parquet(dedup_path)
     last = clusters["DATE"].max()
     rows = load_news_rows().filter(pl.col("DATE") <= last)

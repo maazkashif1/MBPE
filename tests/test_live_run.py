@@ -1,5 +1,3 @@
-"""Hourly orchestrator with every outside dependency faked (isolation, staleness, idempotency); scheduler."""
-
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -8,16 +6,15 @@ import polars as pl
 import pytest
 
 from mbpe.features.market import TS_COL
-from mbpe.live import every
-from mbpe.live import run as lr
-from mbpe.validation.harness import PHASE6_RUNG, rung_features
+from mbpe.live import hourly_run as lr
+from mbpe.live import scheduler as every
+from mbpe.research.experiment import PHASE6_RUNG, rung_features
 
-NOW = datetime(2026, 11, 3, 10, 3, tzinfo=UTC)  # decision time 10:00 (no macro release that day/hour)
+NOW = datetime(2026, 11, 3, 10, 3, tzinfo=UTC)
 T = int(datetime(2026, 11, 3, 10, tzinfo=UTC).timestamp() * 1000)
 
 
 def fake_data(lag_min: int = 0) -> dict:
-    """Every market dataset with its last row lag_min minutes before t (1m bars end 1 min after open)."""
     out = {}
     for ds, ts in TS_COL.items():
         last = T - 60_000 - lag_min * 60_000 if ds.endswith("_1m") else T - 5 * 60_000 - lag_min * 60_000
@@ -36,8 +33,11 @@ def fake_row() -> pl.DataFrame:
 
 @pytest.fixture
 def faked(monkeypatch, tmp_path):
-    from mbpe.live import features, market, news, paper
-    from mbpe.sources import gdelt_live
+    from mbpe.data import binance_rest as market
+    from mbpe.data import gdelt_live
+    from mbpe.features import live as features
+    from mbpe.live import news_update as news
+    from mbpe.live import paper_trading as paper
 
     calls = {"predict": 0, "paper": 0}
     monkeypatch.setattr(market, "top_up", lambda: {})
@@ -81,14 +81,14 @@ def test_failed_source_is_alerted_and_the_run_continues(faked):
 def test_same_hour_is_logged_once(faked):
     root, calls, _ = faked
     lr.run_hourly(NOW, root=root)
-    rec = lr.run_hourly(NOW + timedelta(minutes=20), root=root)  # a retry within the same hour
+    rec = lr.run_hourly(NOW + timedelta(minutes=20), root=root)
     assert "already logged" in rec["note"] and calls["predict"] == 1 and calls["paper"] == 2
     assert len((root / "predictions.jsonl").read_text().splitlines()) == 1
 
 
 def test_stale_market_data_means_no_decision(faked):
     root, calls, state = faked
-    state["data"] = fake_data(lag_min=30)  # last bars 30 min old
+    state["data"] = fake_data(lag_min=30)
     rec = lr.run_hourly(NOW, root=root)
     assert rec["decision"] == "none" and rec["reason"].startswith("stale") and calls["predict"] == 0
     kinds = {json.loads(x)["kind"] for x in (root / "alerts.jsonl").read_text().splitlines()}
@@ -116,6 +116,6 @@ def test_scheduler_slots(now, minute, interval, expected):
 
 def test_late_run_makes_no_decision(faked):
     root, calls, _ = faked
-    rec = lr.run_hourly(NOW + timedelta(minutes=40), root=root)  # machine woke up 43 min after t
+    rec = lr.run_hourly(NOW + timedelta(minutes=40), root=root)
     assert rec["decision"] == "none" and rec["reason"].startswith("late run") and calls["predict"] == 0
-    assert calls["paper"] == 1  # open positions are still settled
+    assert calls["paper"] == 1

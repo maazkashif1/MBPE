@@ -1,15 +1,3 @@
-"""Headline sentiment: hand-labeling sample, model scoring, one title per dedup cluster.
-
-Usage:
-  uv run python -m mbpe.features.sentiment sample         # labeling/sample.csv (+ private key in data/)
-  uv run python -m mbpe.features.sentiment score-sample   # both models on the 200 sample titles + throughput
-  uv run python -m mbpe.features.sentiment score-all      # every unique title, every model (incremental)
-
-Per title: p_pos, p_neg, p_neu and score = p_pos - p_neg. Models load safetensors weights only.
-Labels are mapped by name: positive/bullish -> pos, negative/bearish -> neg, neutral -> neu.
-Empty titles are never scored (they count toward news volume only).
-"""
-
 import csv
 import sys
 import time
@@ -18,23 +6,17 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from mbpe.features.dedup import NewsConfig, clean_title, load_news_config, normalize_title
-from mbpe.sources.gdelt_bq import CRYPTO_KEYWORDS, OUT
+from mbpe.data.gdelt_backfill import CRYPTO_KEYWORDS, OUT
+from mbpe.features.news_dedup import NewsConfig, clean_title, load_news_config, normalize_title
 
 SAMPLE_CSV = Path("labeling/sample.csv")
-SAMPLE_KEY = Path(
-    "data/labeling/sample_key.parquet"
-)  # dates/sources/keywords: kept out of the labeler's view
-SAMPLE_SCORES = Path("data/labeling/sample_scores.parquet")  # also hidden until labeling is done
+SAMPLE_KEY = Path("data/labeling/sample_key.parquet")
+SAMPLE_SCORES = Path("data/labeling/sample_scores.parquet")
 SAMPLE_SIZE, SEED, FIRST_YEAR = 200, 20261027, 2021
 LABEL_MAP = {"positive": "pos", "bullish": "pos", "negative": "neg", "bearish": "neg", "neutral": "neu"}
 
 
-# ---------- labeling sample ----------
-
-
 def make_sample(rows: pl.DataFrame) -> pl.DataFrame:
-    """200 distinct headlines, stratified by year (2021+) x keyword group (crypto / macro), fixed seed."""
     df = (
         rows.with_columns(
             year=pl.col("DATE") // 10**10,
@@ -46,7 +28,7 @@ def make_sample(rows: pl.DataFrame) -> pl.DataFrame:
         .filter((pl.col("year") >= FIRST_YEAR) & (pl.col("clean") != ""))
         .with_columns(norm=pl.col("clean").str.to_lowercase())
         .sort("DATE", "DocumentIdentifier")
-        .unique("norm", keep="first", maintain_order=True)  # no repeated headline in the sample
+        .unique("norm", keep="first", maintain_order=True)
     )
     strata = df.select("year", "group").unique().sort("year", "group").rows()
     base, extra = divmod(SAMPLE_SIZE, len(strata))
@@ -54,7 +36,7 @@ def make_sample(rows: pl.DataFrame) -> pl.DataFrame:
         df.filter((pl.col("year") == y) & (pl.col("group") == g)).sample(base + (i < extra), seed=SEED + i)
         for i, (y, g) in enumerate(strata)
     ]
-    sample = pl.concat(picks).sample(fraction=1.0, shuffle=True, seed=SEED)  # mix strata in the CSV
+    sample = pl.concat(picks).sample(fraction=1.0, shuffle=True, seed=SEED)
     return sample.with_columns(
         id=pl.format("h{}", pl.int_range(1, pl.len() + 1).cast(pl.String).str.zfill(3))
     )
@@ -74,9 +56,6 @@ def write_sample() -> None:
     ).write_parquet(SAMPLE_KEY)
     print(s.group_by("year", "group").len().sort("year", "group"))
     print(f"wrote {SAMPLE_CSV} ({s.height} rows) and {SAMPLE_KEY}")
-
-
-# ---------- scoring ----------
 
 
 class Scorer:
@@ -111,10 +90,6 @@ class Scorer:
 
 
 def score_titles(rows: pl.DataFrame, scorer: Scorer) -> pl.DataFrame:
-    """Score every exact-unique normalized title once and map the scores back to all its rows.
-
-    The text scored is the clean_title of the title's earliest row. Empty titles get no score (volume only).
-    """
     keyed = rows.with_columns(norm=pl.col("title").map_elements(normalize_title, return_dtype=pl.String))
     texts = (
         keyed.filter(pl.col("norm") != "")
@@ -136,7 +111,6 @@ def scores_path(model: str) -> Path:
 
 
 def unique_titles(rows: pl.DataFrame) -> pl.DataFrame:
-    """One row per exact-unique non-empty normalized title: norm, and the clean title of its earliest row."""
     return (
         rows.with_columns(norm=pl.col("title").map_elements(normalize_title, return_dtype=pl.String))
         .filter(pl.col("norm") != "")
@@ -148,17 +122,12 @@ def unique_titles(rows: pl.DataFrame) -> pl.DataFrame:
 
 
 def score_all(cfg: NewsConfig, models: list[str] | None = None) -> None:
-    """Score every exact-unique normalized title with every configured model (data/features/sentiment_*).
-
-    Incremental and resumable: titles already in a model's file are skipped, progress is saved every CHUNK
-    titles. Keyed by `norm`.
-    """
-    from mbpe.sources.gdelt_live import load_news_rows
+    from mbpe.data.gdelt_live import load_news_rows
 
     titles = unique_titles(load_news_rows())
     print(f"{titles.height:,} unique titles", flush=True)
     for name, model_name in cfg.sentiment_models.items():
-        if models is not None and name not in models:  # live: only the scorer the features use
+        if models is not None and name not in models:
             continue
         out = scores_path(name)
         done = pl.read_parquet(out) if out.exists() else None
@@ -184,12 +153,19 @@ def score_sample(cfg: NewsConfig) -> None:
     results, timing = [], []
     for name, model_name in cfg.sentiment_models.items():
         scorer = Scorer(model_name, cfg.device, cfg.batch_size)
-        scorer.score(titles["title"].head(8).to_list())  # warm-up (device kernels), not timed
+        scorer.score(titles["title"].head(8).to_list())
         t0 = time.perf_counter()
         s = scorer.score(titles["title"].to_list())
         dt = time.perf_counter() - t0
-        timing.append({"model": name, "device": cfg.device, "titles": titles.height, "seconds": dt,
-                       "titles_per_s": titles.height / dt})  # fmt: skip
+        timing.append(
+            {
+                "model": name,
+                "device": cfg.device,
+                "titles": titles.height,
+                "seconds": dt,
+                "titles_per_s": titles.height / dt,
+            }
+        )
         results.append(pl.concat([titles.select("id"), s], how="horizontal").with_columns(model=pl.lit(name)))
     SAMPLE_SCORES.parent.mkdir(parents=True, exist_ok=True)
     pl.concat(results).write_parquet(SAMPLE_SCORES)

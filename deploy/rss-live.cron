@@ -1,4 +1,4 @@
 # RSS headline collector: every 15 minutes. NOT installed. No credentials needed.
 # Install with `crontab -e`; adjust MBPE_DIR and the uv path (`which uv`).
 MBPE_DIR=/path/to/MBPE
-7,22,37,52 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.sources.rss_live >> data/logs/rss_live.log 2>&1
+7,22,37,52 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.data.rss >> data/logs/rss_live.log 2>&1

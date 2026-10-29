@@ -10,7 +10,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/uv</string><string>run</string><string>python</string>
-    <string>-m</string><string>mbpe.sources.liquidations_live</string>
+    <string>-m</string><string>mbpe.data.liquidations</string>
   </array>
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>

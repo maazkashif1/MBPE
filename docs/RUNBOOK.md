@@ -6,22 +6,22 @@ The live system makes one decision per UTC hour with the frozen Phase 6 model an
 
 | Job | Command | When |
 |---|---|---|
-| Hourly decision | `uv run python -m mbpe.live.run` | minute 3 of every hour (UTC) |
-| Archive ingest | `uv run python -m mbpe.ingest` | daily (the archive publishes each day ~a day late) |
+| Hourly decision | `uv run python -m mbpe.live.hourly_run` | minute 3 of every hour (UTC) |
+| Archive ingest | `uv run python -m mbpe.data.ingest` | daily (the archive publishes each day ~a day late) |
 | Parity check | `uv run python -m mbpe.live.parity` | daily, after the ingest |
-| RSS headlines (forward-only data) | `uv run python -m mbpe.sources.rss_live` | every 15 min |
-| Liquidations (forward-only data) | `uv run python -m mbpe.sources.liquidations_live` | long-running |
-| Reddit (forward-only data) | `uv run python -m mbpe.sources.reddit_live` | every 15 min, **only once credentials are set** |
+| RSS headlines (forward-only data) | `uv run python -m mbpe.data.rss` | every 15 min |
+| Liquidations (forward-only data) | `uv run python -m mbpe.data.liquidations` | long-running |
+| Reddit (forward-only data) | `uv run python -m mbpe.data.reddit` | every 15 min, **only once credentials are set** |
 
 The hourly run itself does the market top-up (Binance REST), the GDELT live collection, news dedup and FinBERT scoring, features, the decision, the logs and the paper executor.
 
 ## First-time setup
 1. **Install:** `uv sync`. On macOS also run `brew install libomp`.
 2. **Data:**
-   - Run the archive ingest (`uv run python -m mbpe.ingest`). Include `--only mark_price_1m` / `premium_index_1m` / `book_depth` from their start dates if they're missing.
-   - The GDELT history comes from the BigQuery backfill (`mbpe.sources.gdelt_bq`, needs your gcloud login).
+   - Run the archive ingest (`uv run python -m mbpe.data.ingest`). Include `--only mark_price_1m` / `premium_index_1m` / `book_depth` from their start dates if they're missing.
+   - The GDELT history comes from the BigQuery backfill (`mbpe.data.gdelt_backfill`, needs your gcloud login).
    - Then build the labels and features as in the README.
-3. **Freeze the model:** `uv run python -m mbpe.live.model freeze [--threshold X]`. It writes `data/models/phase6/<version>/` with `manifest.json`. The forward test's threshold is decided in Workstream E; the default is the pre-registered 0.60.
+3. **Freeze the model:** `uv run python -m mbpe.live.frozen_model freeze [--threshold X]`. It writes `data/models/phase6/<version>/` with `manifest.json`. The forward test's threshold is decided in Workstream E; the default is the pre-registered 0.60.
 4. **Credentials** (only for the optional collectors): put `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` and the CryptoPanic key in an env file **outside the repo** (e.g. `~/.config/mbpe/reddit.env`, `chmod 600`). Never commit them; `.gitignore` covers `.env*`.
 5. **Schedule**, choosing one of:
    - cron: `deploy/mbpe-live.cron`, `deploy/rss-live.cron`;
@@ -49,7 +49,7 @@ The hourly run itself does the market top-up (Binance REST), the GDELT live coll
 | `data/models/phase6/<version>/` | frozen model + manifest (version = hash of all fitted parameters) |
 
 ## Troubleshooting
-- **"archive is N days behind"**: run `uv run python -m mbpe.ingest`. The REST top-up covers at most 7 days.
+- **"archive is N days behind"**: run `uv run python -m mbpe.data.ingest`. The REST top-up covers at most 7 days.
 - **No decision with reason "stale or missing inputs"**: a source was late at run time. The hour is recorded as no-trade, by design.
 - **"late run"**: the run started more than 15 min after the hour, for example after sleep. The hour is no-trade, by design.
 - **An open paper position doesn't close**: its settlement waits for complete 1m candles and published funding. It settles on a later run, never guessed.

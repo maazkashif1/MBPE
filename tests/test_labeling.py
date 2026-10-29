@@ -1,6 +1,6 @@
 import csv
 
-from mbpe.labeling.label import load, run
+from mbpe.labeling.label_tool import load, run
 
 TITLES = ["Bitcoin climbs to record", "Exchange hacked", "Fed meets Wednesday", "CPI cools"]
 
@@ -29,17 +29,17 @@ def saved(labels):
 
 def test_label_save_quit_and_resume(tmp_path):
     sample, labels = setup(tmp_path)
-    out = session(sample, labels, ["p", "x", "n", "q"])  # "x" is ignored
-    assert saved(labels) == {"h001": "positive", "h002": "negative"}  # saved after each answer
+    out = session(sample, labels, ["p", "x", "n", "q"])
+    assert saved(labels) == {"h001": "positive", "h002": "negative"}
     assert "2/4 labeled" in out
-    out = session(sample, labels, ["u", "q"])  # resumes at the first unlabeled headline
+    out = session(sample, labels, ["u", "q"])
     assert "Fed meets Wednesday" in out.split("\n\n")[1]
     assert saved(labels)["h003"] == "neutral"
 
 
 def test_back_relabels_previous_and_finish_prints_counts(tmp_path):
     sample, labels = setup(tmp_path)
-    out = session(sample, labels, ["p", "b", "n", "u", "u", "u"])  # back to h001, change it to negative
+    out = session(sample, labels, ["p", "b", "n", "u", "u", "u"])
     assert saved(labels) == {"h001": "negative", "h002": "neutral", "h003": "neutral", "h004": "neutral"}
     assert "currently: positive" in out
     assert out.rstrip().endswith("positive: 0  negative: 1  neutral: 3")
@@ -69,14 +69,14 @@ def test_excluded_headlines_are_skipped(tmp_path):
 
 def test_labels_of_excluded_headlines_are_kept_but_not_counted(tmp_path):
     sample, labels = setup(tmp_path)
-    labels.write_text("id,label\nh001,neutral\n")  # labeled before h001 was excluded
+    labels.write_text("id,label\nh001,neutral\n")
     excluded = tmp_path / "excluded.csv"
     excluded.write_text("id,reason\nh001,discussed with an LLM\n")
     out = session(sample, labels, ["p", "q"], excluded)
     assert "0/3 labeled" in out and "1/3 labeled" not in out.split("\n\n")[0]
-    assert saved(labels) == {"h001": "neutral", "h002": "positive"}  # h001 kept on file
+    assert saved(labels) == {"h001": "neutral", "h002": "positive"}
     out = session(sample, labels, ["n", "u"], excluded)
-    assert out.rstrip().endswith("positive: 1  negative: 1  neutral: 1")  # counts cover the 3 shown only
+    assert out.rstrip().endswith("positive: 1  negative: 1  neutral: 1")
 
 
 def test_agreement_metrics_on_hand_example():
@@ -86,8 +86,6 @@ def test_agreement_metrics_on_hand_example():
 
     truth = ["positive", "negative", "neutral", "neutral"]
     pred = ["positive", "neutral", "neutral", "neutral"]
-    # observed 3/4; expected = sum over classes of P_truth * P_pred = 1/16 + 0 + 2/4 * 3/4 = 7/16
     assert cohen_kappa(truth, pred) == pytest.approx((0.75 - 7 / 16) / (1 - 7 / 16))
-    # F1: negative 0, neutral 2*2/(2*2+1+0) = 0.8, positive 1.0
     assert macro_f1(truth, pred) == pytest.approx((0 + 0.8 + 1.0) / 3)
     assert cohen_kappa(truth, truth) == pytest.approx(1.0)

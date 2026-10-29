@@ -1,18 +1,16 @@
-"""Reddit collector without network access: a fake PRAW client."""
-
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
-from mbpe.sources import reddit_live as rl
+from mbpe.data import reddit as rl
 
 T0 = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 
 
 class FakeReddit:
-    def __init__(self, posts):  # {subreddit: [(id, title, created)]}
+    def __init__(self, posts):
         self.posts = posts
 
     def subreddit(self, name):
@@ -29,11 +27,11 @@ def test_collect_keeps_only_static_fields_and_first_sighting(tmp_path):
     posts["CryptoCurrency"] = [("b", "ETH news", T0 + timedelta(minutes=3))]
     meta = rl.collect(FakeReddit(posts), root=tmp_path, now=T0 + timedelta(minutes=15))
     df = rl.load_posts(tmp_path)
-    assert df.columns == list(rl.SCHEMA)  # no score / comment counts
+    assert df.columns == list(rl.SCHEMA)
     assert sorted(df["post_id"]) == ["a", "b"]
     sightings = pl.concat([pl.read_parquet(f) for f in sorted(tmp_path.glob("*/*.parquet"))])
     a = sightings.filter(pl.col("post_id") == "a")["fetched_at"]
-    assert len(a) == 2 and df.filter(pl.col("post_id") == "a")["fetched_at"][0] == a.min()  # first sighting
+    assert len(a) == 2 and df.filter(pl.col("post_id") == "a")["fetched_at"][0] == a.min()
     assert meta["previous_run"] == T0.isoformat()
     assert not any(m["possible_gap"] for m in meta["subreddits"].values())
 

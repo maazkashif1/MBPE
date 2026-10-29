@@ -1,5 +1,3 @@
-"""Phase 6 Workstream B: three-class primary model, decision rule, meta-labeling, TreeSHAP."""
-
 from datetime import UTC, datetime
 
 import lightgbm as lgb
@@ -7,9 +5,9 @@ import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.validation import phase6 as p6
-from mbpe.validation.harness import PHASE6_RUNG, rung_features
-from mbpe.validation.walk_forward import Fold
+from mbpe.research import phase6_models as p6
+from mbpe.research.experiment import PHASE6_RUNG, rung_features
+from mbpe.research.walk_forward import Fold
 
 HOUR = 3_600_000
 
@@ -32,9 +30,8 @@ def test_decision_rule():
     e_l, e_s = p6.expected_r(p_long, means), p6.expected_r(p_short, means)
     assert e_l[0] == pytest.approx(-0.2 - 0.05 + 0.6)
     side = p6.choose_side(e_l, e_s, np.array([True, True, True, False]))
-    # row 0: long > 0; row 1: short better; row 2: tie -> none; row 3: blacked out
     assert side.tolist() == [1, -1, 0, 0]
-    assert p6.choose_side(np.array([-0.1]), np.array([-0.2]), np.array([True])).tolist() == [0]  # E <= 0
+    assert p6.choose_side(np.array([-0.1]), np.array([-0.2]), np.array([True])).tolist() == [0]
 
 
 def test_meta_trains_only_on_earlier_folds_with_finished_trades():
@@ -46,17 +43,24 @@ def test_meta_trains_only_on_earlier_folds_with_finished_trades():
         True,
         False,
         False,
-    ]  # fold 2's trade exiting after fold 3 starts: purged
+    ]
 
 
 @pytest.mark.parametrize("kind", ["lgbm", "catboost"])
 def test_tree_shap_ranks_the_informative_feature(kind):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(1500, 4))
-    y = np.digitize(X[:, 0], [-0.5, 0.5])  # class from feature 0 only
+    y = np.digitize(X[:, 0], [-0.5, 0.5])
     cfg = p6.cfg_p6()
-    d = {"X_train": X[:1000], "y_train": y[:1000], "w_train": np.ones(1000), "X_val": X[1000:1300],
-         "y_val": y[1000:1300], "w_val": np.ones(300), "X_test": X[1300:]}  # fmt: skip
+    d = {
+        "X_train": X[:1000],
+        "y_train": y[:1000],
+        "w_train": np.ones(1000),
+        "X_val": X[1000:1300],
+        "y_val": y[1000:1300],
+        "w_val": np.ones(300),
+        "X_test": X[1300:],
+    }
     _, p_test, model, _ = p6.fit_primary(kind, ["a", "b", "c", "d"], d, cfg)
     assert (p_test.argmax(axis=1) == y[1300:]).mean() > 0.8
     s = p6.tree_shap(kind, model, X[1300:], 4)
@@ -72,7 +76,6 @@ def test_lgbm_contributions_add_up_to_the_raw_score():
 
 
 def synthetic_dataset(seed: int = 0) -> pl.DataFrame:
-    """load_dataset layout over 2021-01 -> 2021-11, hourly, with a planted signal in ret_1h."""
     rng = np.random.default_rng(seed)
     start, end = (int(datetime(2021, m, 1, tzinfo=UTC).timestamp() * 1000) for m in (1, 11))
     t = np.arange(start, end, HOUR, dtype=np.int64)
@@ -115,7 +118,6 @@ def test_end_to_end_on_a_planted_signal():
     df = synthetic_dataset()
     res = p6.run("lgbm", cfg=cfg, df=df)
     cand, tr, info = res["candidates"], res["trades"], res["info"]
-    # the planted signal is found: candidates trade the right side and make money net
     assert (
         cand.height > 100
         and (cand["side"] == np.sign(df["ret_1h"].to_numpy()[cand["row"].to_numpy()])).mean() > 0.9
@@ -123,10 +125,9 @@ def test_end_to_end_on_a_planted_signal():
     rows = cand["row"].to_numpy()
     long_r, short_r = df["long_exit_reason"].to_numpy()[rows], df["short_exit_reason"].to_numpy()[rows]
     truth = np.where(cand["side"].to_numpy() == 1, long_r, short_r)
-    assert [p6.CLASSES[c] for c in cand["exit_class"]] == truth.tolist()  # true outcome of the chosen side
+    assert [p6.CLASSES[c] for c in cand["exit_class"]] == truth.tolist()
     prim = tr.filter((pl.col("strategy") == "primary") & (pl.col("scenario") == "taker"))
     assert prim["net_R"].mean() > 0.5
-    # meta-labeling: only from fold META_FIRST_FOLD, trained on earlier folds' out-of-sample candidates only
     assert cand.filter(pl.col("fold") < p6.META_FIRST_FOLD)["meta_p"].is_null().all()
     assert cand.filter(pl.col("fold") >= p6.META_FIRST_FOLD)["meta_p"].is_not_null().all()
     meta = info.filter(pl.col("side") == "meta")
@@ -135,10 +136,8 @@ def test_end_to_end_on_a_planted_signal():
         assert 0 < r["meta_train"] + r["meta_val"] <= earlier
     assert set(tr["strategy"].unique()) == {"primary", "primary_meta060", "primary_metaval"}
     assert tr.filter(pl.col("strategy") != "primary")["fold"].min() >= p6.META_FIRST_FOLD
-    # SHAP: the planted feature dominates the primary models
     shap = res["shap"].filter(pl.col("model") == "primary_long").drop("fold", "model")
     assert shap.mean().transpose(include_header=True).sort("column_0")["column"][-1] == "ret_1h"
-    # shuffled-label control: the signal disappears
     sh = p6.run("lgbm", cfg=cfg, df=df, shuffle_seed=0)["trades"]
     shp = sh.filter((pl.col("strategy") == "primary") & (pl.col("scenario") == "taker"))
     assert shp.height == 0 or shp["net_R"].mean() < prim["net_R"].mean() - 0.5

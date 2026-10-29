@@ -1,9 +1,3 @@
-"""Leakage tests for every registered market/derivatives feature.
-
-For >= 200 random decision times t: features computed on data truncated at t (only timestamps before t)
-must equal features computed on the full data, at t, for every feature. Failures name the feature.
-"""
-
 from datetime import UTC, datetime
 
 import numpy as np
@@ -28,7 +22,6 @@ N_TIMES = 200
 
 
 def synthetic(days: int = 70, seed: int = 1) -> dict[str, pl.DataFrame]:
-    """1m futures + spot (with gaps), 5-min metrics (gaps, zero-OI placeholders), 8 h funding (ms jitter)."""
     rng = np.random.default_rng(seed)
     start = int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
     n = days * 1440
@@ -53,14 +46,14 @@ def synthetic(days: int = 70, seed: int = 1) -> dict[str, pl.DataFrame]:
         ).with_columns(pl.col("open_time").cast(UTC_MS))
 
     fut_keep = np.ones(n, bool)
-    fut_keep[rng.choice(n, 40, replace=False)] = False  # a few missing futures minutes
+    fut_keep[rng.choice(n, 40, replace=False)] = False
     spot_keep = rng.uniform(size=n) > 0.005
-    spot_keep[35 * 1440 : 35 * 1440 + 180] = False  # a 3 h spot outage
+    spot_keep[35 * 1440 : 35 * 1440 + 180] = False
     mt = start + np.arange(0, n * MIN, 5 * MIN, dtype=np.int64)
     oi = 80_000 * np.exp(np.cumsum(rng.normal(0, 2e-3, len(mt))))
-    oi[rng.choice(len(mt), 15, replace=False)] = 0.0  # placeholder zeros
+    oi[rng.choice(len(mt), 15, replace=False)] = 0.0
     m_keep = np.ones(len(mt), bool)
-    m_keep[40 * 288 : 40 * 288 + 30] = False  # a 2.5 h metrics gap
+    m_keep[40 * 288 : 40 * 288 + 30] = False
     ft = (
         start + np.arange(0, n * MIN, 8 * HOUR, dtype=np.int64) + rng.integers(0, 6, n // 480 + 1)[: n // 480]
     )
@@ -81,8 +74,6 @@ def synthetic(days: int = 70, seed: int = 1) -> dict[str, pl.DataFrame]:
                 "last_funding_rate": rng.normal(1e-4, 2e-4, len(ft)),
             }
         ).with_columns(pl.col("calc_time").cast(UTC_MS)),
-        # Phase 6: mark price (a 2 h outage on day 38) and a signed premium index (a 3 h outage on day 41,
-        # plus ~2% missing minutes so the 80% window-coverage rule is exercised)
         "mark_price_1m": klines(1.0001, mark_keep),
         "premium_index_1m": pl.DataFrame(
             {
@@ -132,8 +123,8 @@ def test_no_leakage_synthetic():
     near_gaps = (
         [start + (35 * 24 + h) * HOUR for h in range(0, 6)]
         + [start + (40 * 24 + h) * HOUR for h in range(5)]
-        + [start + (38 * 24 + h) * HOUR for h in range(4, 9)]  # mark-price outage
-        + [start + (41 * 24 + h) * HOUR for h in range(9, 15)]  # premium outage
+        + [start + (38 * 24 + h) * HOUR for h in range(4, 9)]
+        + [start + (41 * 24 + h) * HOUR for h in range(9, 15)]
     )
     times = decision_times(data, N_TIMES, seed=0, extra=near_gaps)
     assert len(times) >= N_TIMES
@@ -149,7 +140,6 @@ def test_evaluating_at_selected_times_equals_full_table():
 
 @pytest.mark.skipif(not (CLEAN / "metrics.parquet").exists(), reason="clean Binance data not built")
 def test_no_leakage_real_data_slice():
-    """Mar-May 2021: real spot gaps (04-20, 04-25), a metrics gap (04-27) and zero-OI placeholders (05-22)."""
     lo, hi = datetime(2021, 3, 1, tzinfo=UTC), datetime(2021, 5, 25, tzinfo=UTC)
     data = {
         k: df.filter(pl.col(c).is_between(lo, hi, closed="left"))
@@ -168,7 +158,6 @@ def test_no_leakage_real_data_slice():
 
 
 def test_harness_catches_a_leaky_feature():
-    """A feature that peeks one hour ahead must make the leakage check fail, naming it."""
     from mbpe.features.market import Feature
 
     REGISTRY["leaky_future_return"] = Feature(
@@ -206,16 +195,16 @@ def test_mark_premium_values_and_outages():
     names = ["basis_mark_bps", "premium_last_bps", "premium_mean_1h_bps", "premium_mean_8h_bps"]
     df = build_features(data, CFG, at=np.array([ok, in_mark_gap, in_prem_gap]), names=names)
     a, b, c = df.iter_rows(named=True)
-    assert abs(a["basis_mark_bps"] - (1 / 1.0001 - 1) * 1e4) < 1e-6  # futures vs a 1 bp higher mark
-    assert b["basis_mark_bps"] is None and b["premium_last_bps"] is not None  # mark stale, premium fine
-    assert c["premium_last_bps"] is None and c["premium_mean_1h_bps"] is None  # premium outage -> NaN
-    assert c["premium_mean_8h_bps"] is None  # 3 of 8 hours missing: below the 80% rule
-    # coverage edge of the 8 h window after the 10:00-13:00 gap: at 19:00 2 h are missing (75%) -> NaN;
-    # at 20:00 1 h is missing (~86% after the random 2% gaps) -> a value
+    assert abs(a["basis_mark_bps"] - (1 / 1.0001 - 1) * 1e4) < 1e-6
+    assert b["basis_mark_bps"] is None and b["premium_last_bps"] is not None
+    assert c["premium_last_bps"] is None and c["premium_mean_1h_bps"] is None
+    assert c["premium_mean_8h_bps"] is None
     edge = build_features(
-        data, CFG, at=np.array([start + (41 * 24 + 19) * HOUR, start + (41 * 24 + 20) * HOUR]),
+        data,
+        CFG,
+        at=np.array([start + (41 * 24 + 19) * HOUR, start + (41 * 24 + 20) * HOUR]),
         names=["premium_mean_8h_bps"],
-    )["premium_mean_8h_bps"]  # fmt: skip
+    )["premium_mean_8h_bps"]
     assert edge[0] is None and edge[1] is not None
     p = data["premium_index_1m"].filter(pl.col("open_time").dt.epoch("ms").is_between(ok - HOUR, ok - 1))
     assert a["premium_mean_1h_bps"] == pytest.approx(p["close"].mean() * 1e4)

@@ -1,11 +1,9 @@
-"""RSS collector without network access: fixed feed bodies."""
-
 from datetime import UTC, datetime, timedelta
 
 import polars as pl
 import pytest
 
-from mbpe.sources import rss_live as rl
+from mbpe.data import rss as rl
 
 T0 = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 
@@ -22,8 +20,8 @@ ATOM = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
 
 def test_parse_rss_and_atom():
     r = rl.parse_feed(RSS, "a", T0)
-    assert r["title"].to_list() == ["SEC approves spot ETF", "No guid here"]  # empty title skipped
-    assert r["item_id"].to_list() == ["a-1", "https://a.com/3"]  # guid, else link
+    assert r["title"].to_list() == ["SEC approves spot ETF", "No guid here"]
+    assert r["item_id"].to_list() == ["a-1", "https://a.com/3"]
     assert r["published"][0] == datetime(2026, 10, 28, 11, 50, tzinfo=UTC) and r["published"][1] is None
     assert "description" not in r.columns
     a = rl.parse_feed(ATOM, "b", T0)
@@ -48,9 +46,9 @@ def test_collect_first_sighting_broken_feed_and_gap(tmp_path, monkeypatch):
     bodies["broken"] = True
     meta = rl.collect(get, root=tmp_path, now=T0 + timedelta(minutes=15))
     assert meta["feeds"]["b"]["ok"] is False and "feed down" in meta["feeds"]["b"]["error"]
-    assert meta["feeds"]["a"]["possible_gap"] is False  # oldest item (11:50) is older than the previous run
+    assert meta["feeds"]["a"]["possible_gap"] is False
     items = rl.load_items(tmp_path)
-    assert items.height == 3  # a-1, a-3 (seen twice, kept once) and the Atom entry
+    assert items.height == 3
     seen = pl.concat([pl.read_parquet(f) for f in sorted(tmp_path.glob("*/*.parquet"))])
     a1 = seen.filter(pl.col("item_id") == "a-1")["fetched_at"]
     assert len(a1) == 2 and items.filter(pl.col("item_id") == "a-1")["fetched_at"][0] == a1.min()
@@ -62,7 +60,7 @@ def test_gap_flag_when_feed_scrolled_past_previous_run(tmp_path, monkeypatch):
     meta = rl.collect(
         lambda u: RSS.replace(b"garbage", b"Wed, 28 Oct 2026 11:59:00 +0000"), root=tmp_path, now=T0
     )
-    assert meta["feeds"]["a"]["possible_gap"] is True  # oldest 11:50 > previous run 10:00
+    assert meta["feeds"]["a"]["possible_gap"] is True
 
 
 @pytest.mark.parametrize("text", [None, "", "not a date"])

@@ -13,15 +13,14 @@ from mbpe.labels.triple_barrier import (
     scenario_net_r,
 )
 
-T = datetime(2024, 1, 1, 12, tzinfo=UTC)  # decision time
-CFG = LabelConfig(horizon_minutes=5, latency_minutes=1)  # entry at T+1m, window T+1m .. T+5m
-COST = 0.0005 + 2 / 1e4  # taker fee + slippage, per side
-ATR = 10.0  # entry 100 -> long tp 120, sl 90; short tp 80, sl 110
+T = datetime(2024, 1, 1, 12, tzinfo=UTC)
+CFG = LabelConfig(horizon_minutes=5, latency_minutes=1)
+COST = 0.0005 + 2 / 1e4
+ATR = 10.0
 FLAT = (100.0, 101.0, 99.0, 100.0)
 
 
 def candles(path: dict[int, tuple] | None = None, minutes: range = range(0, 7)) -> pl.DataFrame:
-    """1m candles at T+m for m in `minutes`; flat (o,h,l,c) unless overridden in `path`."""
     path = path or {}
     rows = [(T + timedelta(minutes=m), *path.get(m, FLAT)) for m in minutes]
     return pl.DataFrame(
@@ -48,7 +47,6 @@ def funding(*minutes_rates: tuple[int, float]) -> pl.DataFrame:
 
 
 def funding_schedule(start: datetime, hours: int, rate: float = 1e-4) -> pl.DataFrame:
-    """A complete 8 h settlement schedule (00/08/16 UTC) covering `hours` from `start`, plus one interval."""
     times = [
         start + timedelta(hours=h) for h in range(0, hours + 9) if (start + timedelta(hours=h)).hour % 8 == 0
     ]
@@ -73,24 +71,24 @@ def label(path=None, fund=None, side="long", minutes=range(0, 7), atr=ATR) -> di
 def test_take_profit():
     r = label({3: (100, 121, 99, 118)})
     assert r["exit_reason"] == "tp"
-    assert r["exit_time"] == T + timedelta(minutes=4)  # close of the T+3m candle
+    assert r["exit_time"] == T + timedelta(minutes=4)
     assert r["gross_R"] == pytest.approx(2.0)
-    assert r["net_R"] == pytest.approx(2.0 - COST * (100 + 120) / 10)  # 1.9846
+    assert r["net_R"] == pytest.approx(2.0 - COST * (100 + 120) / 10)
     assert r["label"]
 
 
 def test_stop():
     r = label({2: (100, 101, 89, 92)})
     assert r["exit_reason"] == "sl"
-    assert r["net_R"] == pytest.approx(-1.0 - COST * (100 + 90) / 10)  # -1.0133
+    assert r["net_R"] == pytest.approx(-1.0 - COST * (100 + 90) / 10)
     assert not r["label"]
 
 
 def test_expiry_exits_at_last_close():
     r = label({5: (100, 106, 99, 105)})
     assert r["exit_reason"] == "expiry"
-    assert r["exit_time"] == T + timedelta(minutes=6)  # close of the last window candle (T+5m)
-    assert r["net_R"] == pytest.approx(0.5 - COST * (100 + 105) / 10)  # 0.48565
+    assert r["exit_time"] == T + timedelta(minutes=6)
+    assert r["net_R"] == pytest.approx(0.5 - COST * (100 + 105) / 10)
 
 
 def test_both_barriers_in_one_candle_is_a_stop():
@@ -102,7 +100,7 @@ def test_both_barriers_in_one_candle_is_a_stop():
 def test_gap_through_stop_fills_at_open():
     r = label({3: (85, 86, 84, 85)})
     assert r["exit_reason"] == "sl"
-    assert r["exit_time"] == T + timedelta(minutes=3)  # open of the gapping candle
+    assert r["exit_time"] == T + timedelta(minutes=3)
     assert r["gross_R"] == pytest.approx(-1.5)
     assert r["net_R"] == pytest.approx(-1.5 - COST * (100 + 85) / 10)
 
@@ -110,11 +108,11 @@ def test_gap_through_stop_fills_at_open():
 @pytest.mark.parametrize(
     "events, long_r",
     [
-        ([(3, 0.0001)], -0.0001 * 100 / 10),  # inside the trade
-        ([(1, 0.0001)], 0.0),  # at entry time: not strictly after entry
-        ([(7, 0.0001)], 0.0),  # after the exit (expiry at T+6m)
-        ([(6, 0.0002)], -0.0002 * 100 / 10),  # exactly at exit: included
-        ([(3, -0.0001)], 0.0001 * 100 / 10),  # negative funding: longs receive
+        ([(3, 0.0001)], -0.0001 * 100 / 10),
+        ([(1, 0.0001)], 0.0),
+        ([(7, 0.0001)], 0.0),
+        ([(6, 0.0002)], -0.0002 * 100 / 10),
+        ([(3, -0.0001)], 0.0001 * 100 / 10),
     ],
 )
 def test_funding_sign_and_window(events, long_r):
@@ -138,7 +136,7 @@ def test_missing_candle_in_window_skips_row():
 
 
 def test_changing_candles_after_exit_does_not_change_row():
-    tp_path = {3: (100, 121, 99, 118)}  # exits on the T+3m candle
+    tp_path = {3: (100, 121, 99, 118)}
     base = label(tp_path)
     changed = label({**tp_path, 4: (50, 200, 10, 60), 5: (60, 70, 1, 2)})
     assert changed == base
@@ -181,26 +179,21 @@ def test_atr_uses_only_bars_closed_by_t():
     atr = atr_at(df, cfg, t)
     assert atr is not None
     assert atr_at(shock_from(df, t), cfg, t) == atr
-    assert atr == atr_bars(df, "1h", 14).filter(pl.col("bar_close") == t)["atr"][0]  # the bar closing at t
-    # warm-up: no ATR before 14 complete bars
+    assert atr == atr_bars(df, "1h", 14).filter(pl.col("bar_close") == t)["atr"][0]
     assert decision_atr(df, cfg)["atr"].head(13).is_null().all()
 
 
 def test_4h_atr_uses_only_4h_bars_closed_by_t():
     df, cfg = random_candles(80), LabelConfig(atr_timeframe="4h")
-    closed = START + timedelta(hours=64)  # a 4h bar closes here (bars start 00:00 UTC)
+    closed = START + timedelta(hours=64)
     atr = atr_at(df, cfg, closed)
     assert atr is not None
-    # t = 64h..67h all use the bar that closed at 64h; the 64h-68h bar is still forming
     for h in range(4):
         assert atr_at(df, cfg, closed + timedelta(hours=h)) == atr
-    # changing candles from 64h on (the forming bar and later) doesn't change those ATRs ...
     shocked = shock_from(df, closed)
     for h in range(4):
         assert atr_at(shocked, cfg, closed + timedelta(hours=h)) == atr
-    # ... but does change the ATR once the next bar has closed (sanity: the shock is visible)
     assert atr_at(shocked, cfg, closed + timedelta(hours=4)) != atr_at(df, cfg, closed + timedelta(hours=4))
-    # warm-up: 14 bars of 4h = 56h
     assert atr_at(df, cfg, START + timedelta(hours=55)) is None
     assert atr_at(df, cfg, START + timedelta(hours=56)) is not None
 
@@ -214,12 +207,12 @@ def test_taker_scenario_reproduces_stored_net_r_exactly():
 @pytest.mark.parametrize(
     "path, expected",
     [
-        ({3: (100, 121, 99, 118)}, 2.0 - 0.0002 * (100 + 120) / 10),  # maker entry + maker tp, no slippage
+        ({3: (100, 121, 99, 118)}, 2.0 - 0.0002 * (100 + 120) / 10),
         (
             {2: (100, 101, 89, 92)},
             -1.0 - (0.0002 * 100 + (0.0005 + 0.0002) * 90) / 10,
-        ),  # maker entry, taker stop
-        ({5: (100, 106, 99, 105)}, 0.5 - (0.0002 * 100 + (0.0005 + 0.0002) * 105) / 10),  # taker expiry
+        ),
+        ({5: (100, 106, 99, 105)}, 0.5 - (0.0002 * 100 + (0.0005 + 0.0002) * 105) / 10),
     ],
     ids=["tp", "sl", "expiry"],
 )
@@ -254,12 +247,12 @@ def test_missing_funding_inside_a_trade_window_fails():
     from mbpe.labels.triple_barrier import MissingFundingError
 
     full = funding_schedule(START, 80)
-    gap = full.filter(pl.col("calc_time") != START + timedelta(hours=40))  # one settlement missing
+    gap = full.filter(pl.col("calc_time") != START + timedelta(hours=40))
     with pytest.raises(MissingFundingError, match="funding time with no funding data"):
         build_labels(random_candles(80, seed=1), gap, LabelConfig())
     with pytest.raises(MissingFundingError):
-        build_labels(random_candles(80, seed=1), full.head(0), LabelConfig())  # none at all: never zero
-    build_labels(random_candles(80, seed=1), full, LabelConfig())  # complete schedule passes
+        build_labels(random_candles(80, seed=1), full.head(0), LabelConfig())
+    build_labels(random_candles(80, seed=1), full, LabelConfig())
 
 
 def test_funding_interval_must_match_config():
@@ -269,16 +262,15 @@ def test_funding_interval_must_match_config():
 
 
 def test_daily_atr_and_4_hourly_decisions():
-    """Phase 5: decisions only at 00/04/.../20 UTC; daily ATR from the UTC daily bar closed at or before t."""
     df = random_candles(24 * 17)
     cfg = LabelConfig(atr_timeframe="1d", decision_every_hours=4)
     d = decision_atr(df, cfg)
     assert set(d["decision_time"].dt.hour().unique().to_list()) == {0, 4, 8, 12, 16, 20}
-    midnight = START + timedelta(days=15)  # the 15th daily bar closes here: first ATR(14) = after warm-up
+    midnight = START + timedelta(days=15)
     atr = atr_at(df, cfg, midnight)
     assert atr is not None and atr_at(df, cfg, midnight - timedelta(hours=4)) is not None
     assert atr == atr_bars(df, "1d", 14).filter(pl.col("bar_close") == midnight)["atr"][0]
-    shocked = shock_from(df, midnight)  # the forming day must not leak into t = 00:00 ... 20:00
+    shocked = shock_from(df, midnight)
     for h in range(0, 24, 4):
         assert atr_at(shocked, cfg, midnight + timedelta(hours=h)) == atr
     assert atr_at(shocked, cfg, midnight + timedelta(days=1)) != atr_at(df, cfg, midnight + timedelta(days=1))

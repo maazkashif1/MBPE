@@ -1,17 +1,3 @@
-"""Live/archive parity check (Phase 6 Workstream D; tolerances in SCOPE.md, Workstream D definitions).
-
-For every logged decision time t the archive now covers (every market dataset's archive reaches t):
-- market features (market + derivatives + mark/premium groups) recomputed from the archive clean layer only;
-  news / calendar / regulatory features recomputed from all news rows known now (live dedup store), which
-  includes GDELT batches that arrived after t
-- each feature: equal within TOL (relative to max(1, |archive|)) or both missing
-- the decision re-made by the same frozen model version on the archive features: same or not
-- every closed paper trade: equal to the label set A label computed from archive candles and funding
-Results: data/live/parity/<run date>.json (summary) and .parquet (per hour and feature).
-
-Usage: uv run python -m mbpe.live.parity
-"""
-
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,15 +5,15 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from mbpe.features.dedup import load_news_config
+from mbpe.data.binance_rest import archive_end
 from mbpe.features.market import DATASETS, REGISTRY, build_features, load_data, load_feature_config
 from mbpe.features.news import NEWS_REGISTRY, build_news_features, load_inputs
+from mbpe.features.news_dedup import load_news_config
 from mbpe.labels.triple_barrier import label_trades, load_config
-from mbpe.live import model as lmod
-from mbpe.live import paper
-from mbpe.live.market import archive_end
-from mbpe.live.news import LIVE_DEDUP
-from mbpe.live.run import LIVE
+from mbpe.live import frozen_model as lmod
+from mbpe.live import paper_trading as paper
+from mbpe.live.hourly_run import LIVE
+from mbpe.live.news_update import LIVE_DEDUP
 
 TOL = 1e-9
 
@@ -72,7 +58,6 @@ def check(root: Path = LIVE, model_root: Path = lmod.MODEL_ROOT) -> dict:
                 }
             )
     feats = pl.DataFrame(rows)
-    # decisions re-made on the archive features by the logged model version
     preds = pl.read_ndjson(root / "predictions.jsonl").filter(pl.col("decision").is_not_null())
     agree, compared = 0, 0
     for r in preds.filter(pl.col("decision_ms").is_in(at.tolist())).iter_rows(named=True):
@@ -82,7 +67,6 @@ def check(root: Path = LIVE, model_root: Path = lmod.MODEL_ROOT) -> dict:
             again = lmod.predict(fz, row, bool(r["eligible"]))
             agree += again["decision"] == r["decision"]
             compared += 1
-    # closed paper trades vs labels from archive data
     led = paper.ledger(root / "paper")
     closes = led.filter(pl.col("event") == "close") if led.height else led
     trade_ok, trade_n = 0, 0

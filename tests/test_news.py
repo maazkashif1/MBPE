@@ -5,25 +5,23 @@ import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.features.dedup import NewsConfig, clean_title, dedup, normalize_title
+from mbpe.features.news_dedup import NewsConfig, clean_title, dedup, normalize_title
 
 CFG = NewsConfig(dedup_threshold=0.85, dedup_window_hours=24)
 
 
 def fake_embed(texts: list[str]) -> np.ndarray:
-    """Deterministic unit vectors: identical text -> same vector; "~"-suffixed variants are near-copies."""
     out = []
     for t in texts:
         base = t.split("~")[0]
         v = np.random.default_rng(int(hashlib.md5(base.encode()).hexdigest()[:8], 16)).normal(size=64)
-        if "~" in t:  # a near-duplicate: same story, slightly perturbed (cosine ~0.95)
+        if "~" in t:
             v = v + 0.33 * np.random.default_rng(len(t)).normal(size=64)
         out.append(v / np.linalg.norm(v))
     return np.array(out, dtype=np.float32)
 
 
 def rows(items: list[tuple[int, str]]) -> pl.DataFrame:
-    """(DATE, title) -> backfill-like rows."""
     return pl.DataFrame(
         {
             "DATE": [d for d, _ in items],
@@ -47,7 +45,7 @@ def test_cluster_availability_is_its_earliest_member():
         pl.col("DATE").min().alias("min_date"), pl.col("cluster_DATE").first()
     )
     assert (earliest["cluster_DATE"] == earliest["min_date"]).all()
-    assert out["cluster_id"].n_unique() < out.height  # copies did merge
+    assert out["cluster_id"].n_unique() < out.height
 
 
 def test_adding_later_rows_never_changes_earlier_clusters():
@@ -84,8 +82,8 @@ def test_matches_only_within_window_and_empty_titles_stay_alone():
         rows(
             [
                 (20261001100000, "Bitcoin hits a record high today"),
-                (20261002100000, "Bitcoin hits a record high today"),  # exactly 24 h later: inside
-                (20261003101500, "Bitcoin hits a record high today"),  # 24 h 15 min after the previous one
+                (20261002100000, "Bitcoin hits a record high today"),
+                (20261003101500, "Bitcoin hits a record high today"),
                 (20261003101500, ""),
                 (20261003103000, ""),
             ]
@@ -101,14 +99,14 @@ def test_matches_only_within_window_and_empty_titles_stay_alone():
 def test_clean_title():
     assert clean_title("Fed holds rates | Reuters") == "Fed holds rates"
     assert clean_title("Bitcoin &amp;amp; Ether rally - CoinDesk") == "Bitcoin & Ether rally"
-    assert clean_title("Bitcoin - a new high") == "Bitcoin - a new high"  # too little left to strip
+    assert clean_title("Bitcoin - a new high") == "Bitcoin - a new high"
     assert clean_title("Fed - ECB - BoE meet") == "Fed - ECB - BoE meet"
     assert normalize_title(None) == ""
 
 
 def test_scoring_is_deterministic_across_runs():
     pytest.importorskip("transformers")
-    from mbpe.features.dedup import load_news_config
+    from mbpe.features.news_dedup import load_news_config
     from mbpe.features.sentiment import Scorer
 
     cfg = load_news_config()
@@ -126,7 +124,6 @@ def test_scoring_is_deterministic_across_runs():
 
 
 def test_clusters_close_24h_after_their_first_member():
-    # a near-copy every 6 h: each matches the previous one, but the cluster must not outlive 24 h
     start = datetime(2026, 10, 1)
     items = [
         (int(f"{start + timedelta(hours=6 * k):%Y%m%d%H%M%S}"), "ETF approval story" + "~" * k)
@@ -134,8 +131,8 @@ def test_clusters_close_24h_after_their_first_member():
     ]
     out = dedup(rows(items), lambda texts: fake_embed([t.replace("~", "") for t in texts]), CFG)
     ids = out["cluster_id"].to_list()
-    assert ids[:5] == [ids[0]] * 5  # 0, 6, 12, 18, 24 h after the first member
-    assert ids[5] != ids[0]  # 30 h: new cluster
+    assert ids[:5] == [ids[0]] * 5
+    assert ids[5] != ids[0]
     assert ids[6] == ids[5]
 
 
@@ -155,8 +152,8 @@ def test_score_titles_scores_each_exact_unique_title_once():
     df = rows(
         [
             (20261001100000, "Fed &amp; ECB hold rates | Reuters"),
-            (20261001101500, "Fed & ECB hold rates"),  # same normalized title
-            (20261001103000, "Fed and ECB hold rates"),  # near-duplicate but a different exact title
+            (20261001101500, "Fed & ECB hold rates"),
+            (20261001103000, "Fed and ECB hold rates"),
             (20261001104500, ""),
         ]
     )
@@ -167,13 +164,12 @@ def test_score_titles_scores_each_exact_unique_title_once():
 
 
 def test_incremental_chunks_reproduce_a_full_run():
-    """Live use: each new day's rows, with the previous 48 h as fixed context, give the same as a full run."""
     rng = np.random.default_rng(3)
     start = datetime(2026, 10, 1)
     items = []
-    for i in range(6 * 96):  # 6 days of 15-min batches
+    for i in range(6 * 96):
         for _ in range(rng.integers(0, 3)):
-            story = (i // 30 + rng.integers(0, 5)) % 25  # stories drift and recur after > 24 h
+            story = (i // 30 + rng.integers(0, 5)) % 25
             when = int(f"{start + timedelta(minutes=15 * i):%Y%m%d%H%M%S}")
             items.append((when, f"story {story} today" + "~" * rng.integers(0, 3)))
     df = rows(items)
@@ -192,4 +188,4 @@ def test_incremental_chunks_reproduce_a_full_run():
     assert inc.height == full.height
     for c in ("cluster_id", "cluster_DATE", "match_sim"):
         assert inc[c].equals(full[c]), c
-    assert full["cluster_id"].n_unique() < full.height  # merges happened, incl. across chunk boundaries
+    assert full["cluster_id"].n_unique() < full.height

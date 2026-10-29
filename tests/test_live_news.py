@@ -1,12 +1,10 @@
-"""Live dedup store: appending new rows reproduces a full run."""
-
 from datetime import datetime, timedelta
 
 import numpy as np
 import polars as pl
 
-from mbpe.features.dedup import dedup
-from mbpe.live.news import COLS, update_dedup
+from mbpe.features.news_dedup import dedup
+from mbpe.live.news_update import COLS, update_dedup
 from tests.test_news import CFG, fake_embed, rows
 
 
@@ -27,7 +25,7 @@ def test_update_dedup_matches_a_full_run(tmp_path):
     dedup(df.filter(pl.col("DATE") < cut), fake_embed, CFG).select(COLS).write_parquet(store)
     added = update_dedup(CFG, fake_embed, store, rows=df)
     assert added == df.filter(pl.col("DATE") >= cut).height
-    assert update_dedup(CFG, fake_embed, store, rows=df) == 0  # nothing new
+    assert update_dedup(CFG, fake_embed, store, rows=df) == 0
     inc = pl.read_parquet(store).sort("DATE", "DocumentIdentifier")
     for c in ("cluster_id", "cluster_DATE", "match_sim"):
         assert inc[c].equals(full[c]), c

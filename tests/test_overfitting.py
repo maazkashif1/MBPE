@@ -5,20 +5,19 @@ import polars as pl
 import pytest
 from scipy.stats import norm
 
-from mbpe.validation.overfitting import cscv_pbo, daily_returns, expected_max_sharpe, psr
+from mbpe.research.overfitting import cscv_pbo, daily_returns, expected_max_sharpe, psr
 
 
 def test_pbo_low_when_one_strategy_has_a_real_edge():
     rng = np.random.default_rng(0)
     r = rng.normal(0, 1, size=(1600, 10))
-    r[:, 3] += 0.3  # a persistent edge in one strategy
+    r[:, 3] += 0.3
     res = cscv_pbo(r, n_groups=16)
     assert res["pbo"] < 0.05
     assert (res["winners"] == 3).mean() > 0.95
 
 
 def test_pbo_averages_half_for_pure_noise():
-    # one noise dataset gives a noisy PBO (the splits share data); averaged over datasets it is ~0.5
     pbos = [
         cscv_pbo(np.random.default_rng(s).normal(0, 1, size=(800, 20)), n_groups=10)["pbo"] for s in range(20)
     ]
@@ -30,13 +29,12 @@ def test_pbo_averages_half_for_pure_noise():
 
 def test_pbo_rejects_degenerate_input():
     with pytest.raises(ValueError):
-        cscv_pbo(np.zeros((100, 1)))  # one strategy
+        cscv_pbo(np.zeros((100, 1)))
     with pytest.raises(ValueError):
-        cscv_pbo(np.zeros((100, 4)), n_groups=15)  # odd number of groups
+        cscv_pbo(np.zeros((100, 4)), n_groups=15)
 
 
 def test_psr_matches_closed_form():
-    # normal returns (skew 0, kurtosis 3): PSR = Phi(sr * sqrt(n - 1) / sqrt(1 + sr^2 / 2))
     assert psr(0.1, 101, 0.0, 3.0, 0.0) == pytest.approx(norm.cdf(0.1 * 10 / math.sqrt(1 + 0.01 / 2)))
     assert psr(0.1, 101, 0.0, 3.0, 0.1) == pytest.approx(0.5)
 

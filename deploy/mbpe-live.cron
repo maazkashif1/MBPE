@@ -4,8 +4,8 @@
 CRON_TZ=UTC
 MBPE_DIR=/path/to/MBPE
 # hourly decision for the hour that just closed (data top-up, GDELT, features, frozen model, paper executor)
-3 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.live.run >> data/logs/live.log 2>&1
+3 * * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.live.hourly_run >> data/logs/live.log 2>&1
 # daily archive ingest (the source of record; the live store only covers what the archive hasn't published)
-30 2 * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.ingest >> data/logs/ingest_daily.log 2>&1
+30 2 * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.data.ingest >> data/logs/ingest_daily.log 2>&1
 # daily live/archive parity check on the hours the archive now covers
 45 3 * * * cd "$MBPE_DIR" && /opt/homebrew/bin/uv run python -m mbpe.live.parity >> data/logs/parity.log 2>&1

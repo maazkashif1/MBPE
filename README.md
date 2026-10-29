@@ -8,7 +8,7 @@ A research MVP asking one question:
 
 **The full scoped system is now being forward-tested** on live data with paper trading (no real orders). This is the only test that can still establish an edge. The verdict comes after at least 6 months and 100 trades.
 
-Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`PROGRESS.md`](PROGRESS.md), in tables generated from committed report files. This README describes the project and points there.
+Every result number lives in [`docs/FINDINGS.md`](docs/FINDINGS.md) and [`docs/PROGRESS.md`](docs/PROGRESS.md), in tables generated from committed report files. This README describes the project and points there.
 
 ## Results by phase
 
@@ -30,10 +30,10 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
 
 | Job | When |
 |---|---|
-| `mbpe.live.run`: the decision for the hour that just closed, then the paper executor | minute 3 of every hour (UTC) |
-| `mbpe.ingest` then `mbpe.live.parity`: archive ingest, then the live-vs-archive parity check | daily |
-| `mbpe.sources.rss_live`: crypto news headlines (forward-only data) | every 15 min |
-| `mbpe.sources.liquidations_live`: Binance liquidation stream (forward-only data) | continuously |
+| `mbpe.live.hourly_run`: the decision for the hour that just closed, then the paper executor | minute 3 of every hour (UTC) |
+| `mbpe.data.ingest` then `mbpe.live.parity`: archive ingest, then the live-vs-archive parity check | daily |
+| `mbpe.data.rss`: crypto news headlines (forward-only data) | every 15 min |
+| `mbpe.data.liquidations`: Binance liquidation stream (forward-only data) | continuously |
 
 **Each hourly run:**
 1. Tops up Binance market data from the free REST API, into a separate live store. The archive is the source of record and is never modified.
@@ -44,10 +44,10 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
 
 **The frozen system:**
 - **Model:** version `f4c4365501a9272b`. That's a LightGBM three-class primary model per side plus a meta-labeling filter, trained only on data before 2026-04-26.
-- **Threshold:** the meta filter's validation-chosen threshold (0.3091). This is a dated amendment made after seeing the historical results, where that variant still lost money after costs; it's stated as such in `SCOPE.md`.
+- **Threshold:** the meta filter's validation-chosen threshold (0.3091). This is a dated amendment made after seeing the historical results, where that variant still lost money after costs; it's stated as such in `docs/SCOPE.md`.
 - **Pinned:** the model version and threshold are fixed in a start record committed before the first decision.
 
-**Rules** (fixed in `SCOPE.md`, "Phase 6 Workstream D/E"):
+**Rules** (fixed in `docs/SCOPE.md`, "Phase 6 Workstream D/E"):
 - **No orders and no exchange keys.** Every paper trade is settled by the backtest's own label code (entry at t + 1 min, ATR barriers, 4 h horizon, funding and costs), with the backtest's one-position rule.
 - **No decision on bad inputs:** stale inputs, a run starting more than 15 min late, or a missed hour (machine asleep) all mean no decision. Nothing is backfilled with hindsight.
 - **Daily parity check:** live features, decisions and paper trades are recomputed from the archive and compared. Paper trades must equal the archive labels exactly.
@@ -60,7 +60,7 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
 - `parity/`, `alerts.jsonl`, `daily/`.
 
 ## How the study was kept honest
-- **Pre-registration:** every protocol choice was written to [`SCOPE.md`](SCOPE.md) and committed before the results it governs existed. Later changes are dated amendments that state their effect and whether they followed any result.
+- **Pre-registration:** every protocol choice was written to [`docs/SCOPE.md`](docs/SCOPE.md) and committed before the results it governs existed. Later changes are dated amendments that state their effect and whether they followed any result.
   - Covered: holdout date, folds, rungs, thresholds and entry rules, tuning budget, kill and pass criteria, interpretation rules, live-system rules and the forward-test start.
 - **One holdout, spent once:** loading holdout rows raises an error unless an explicit flag is passed, and every allowed access is appended to `data/logs/holdout_access.jsonl`. The holdout was opened exactly once, for the pre-registered Phase 3 run.
 - **Leakage controls:**
@@ -73,7 +73,7 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
   - random entry and a volatility filter at the model's own trade frequency (20 seeds each);
   - shuffled-label controls (20 permutations from Phase 5 on).
 - **Selection accounted for:** a deflated Sharpe ratio with the full trial count, and PBO via CSCV.
-- **No hand-typed result numbers:** every results table in `PROGRESS.md` and `FINDINGS.md` sits between `<!-- generated:… -->` markers. It is rebuilt from `reports/` by `mbpe.reports.progress`, and `tests/test_progress.py` fails on any mismatch.
+- **No hand-typed result numbers:** every results table in `docs/PROGRESS.md` and `docs/FINDINGS.md` sits between `<!-- generated:… -->` markers. It is rebuilt from `reports/` by `mbpe.reporting.generated_tables`, and `tests/test_progress.py` fails on any mismatch.
 - **Reproduction checks:** later phases re-run earlier configurations through the modified code and must match the committed numbers exactly.
 - **The live system is held to the backtest:**
   - the live paper loop, run hour by hour, reproduces the backtest's labels and position rule exactly (test);
@@ -81,16 +81,18 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
   - the frozen model's predictions equal the research code's.
 - **CI** (`.github/workflows/ci.yml`): ruff, the format check, the tests and the generated-table check on every push.
 
-## Documents
+## Documents (`docs/`)
 | File | Contents |
 |---|---|
-| [`reports/FINDINGS.md`](reports/FINDINGS.md) | The write-up: question, method, results, holdout, Phases 4–5, limitations, lessons |
-| [`PROGRESS.md`](PROGRESS.md) | Step-by-step log of every phase incl. Phase 6 (Workstreams A–D), with full generated tables |
-| [`SCOPE.md`](SCOPE.md) | Locked scope, every pre-registration, amendments, and the forward-test start record |
+| [`docs/FINDINGS.md`](docs/FINDINGS.md) | The write-up: question, method, results, holdout, Phases 4–6, the forward test, limitations, lessons |
+| [`docs/PROGRESS.md`](docs/PROGRESS.md) | Step-by-step log of every phase, with full generated tables |
+| [`docs/SCOPE.md`](docs/SCOPE.md) | Locked scope, every pre-registration, amendments, and the forward-test start record |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operating the live system: setup, schedules, daily checks, troubleshooting, stopping |
-| [`FEASIBILITY.md`](FEASIBILITY.md) | Data-source feasibility checks (Binance archive, GDELT, order book, NFP calendar, Reddit API, live depth) |
-| [`REFERENCE_NOTES.md`](REFERENCE_NOTES.md) | Notes from the reference repositories |
+| [`docs/FEASIBILITY.md`](docs/FEASIBILITY.md) | Data-source feasibility checks (Binance archive, GDELT, order book, NFP calendar, Reddit API, live depth) |
+| [`docs/REFERENCE_NOTES.md`](docs/REFERENCE_NOTES.md) | Notes from the reference repositories |
 | [`labeling/GUIDE.md`](labeling/GUIDE.md) | Guide for hand-labeling headline tone (optional benchmark) |
+
+The historical sections of `PROGRESS.md` and `docs/SCOPE.md` keep the file paths of their time. The repository was reorganized on 2026-10-29; the old → new map is in `docs/SCOPE.md` ("Amendments").
 
 ## Data (free sources only)
 - **Binance public archive** ([data.binance.vision](https://data.binance.vision)), BTCUSDT USD-M, every file SHA-256 verified:
@@ -108,24 +110,27 @@ Every result number lives in [`reports/FINDINGS.md`](reports/FINDINGS.md) and [`
 ## Repository layout
 ```
 mbpe/
-  sources/      Binance archive, GDELT BigQuery backfill + live collector + parity check, RSS, liquidations, Reddit
-  storage/      clean layer: validated Parquet per dataset, gap reports
-  labels/       triple-barrier labels (configurable bars, horizon, cadence, cost scenarios)
-  features/     market + derivatives (incl. MACD/EMA, mark/premium), news dedup + sentiment + news/calendar/
-                regulatory, Phase 4 (NFP, order book)
-  labeling/     terminal headline-labeling tool and scorer agreement
-  validation/   walk-forward splitter + holdout guard, harness, backtest, tuning, overfitting (DSR, PBO),
-                holdout run, Phase 4-6 runners (three-class primary, meta-labeling, SHAP)
-  live/         live market top-up, incremental news, live features, frozen model, paper executor,
-                hourly orchestrator, parity check, scheduler
-  reports/      generated-table builder for PROGRESS.md / FINDINGS.md
-config/         evaluation protocol, label sets (A, B, P5), features, news configs
-reports/        committed results per phase (CSV / JSON), the sources of every generated table
-tests/          leakage, label, harness, overfitting, live-system and report-consistency tests
+  data/         getting and cleaning data
+                  binance_archive, binance_rest (live top-up), gdelt_backfill, gdelt_live, gdelt_parity,
+                  rss, liquidations, reddit, clean (validated Parquet + gap reports), ingest
+  labels/       triple_barrier: what each trade would have earned (barriers, horizon, costs, funding)
+  features/     what the model sees: market, news, news_dedup, sentiment, nfp_and_orderbook,
+                  live (all features at one decision time, for the live system)
+  research/     the finished experiments
+                  walk_forward (folds + holdout guard), backtest, experiment (models, thresholds, controls),
+                  tuning, overfitting (DSR, PBO), phase3_tuned, phase3_cryptobert, phase3_holdout,
+                  phase4, phase5, phase6_models, phase6_evaluation, phase6_data_report
+  live/         the forward test
+                  hourly_run, frozen_model, paper_trading, news_update, parity, scheduler
+  reporting/    generated_tables: rebuilds every results table in docs/ from reports/
+  labeling/     label_tool (hand-labeling headlines), agreement
+scripts/        feasibility.py: read-only data-source checks behind docs/FEASIBILITY.md
+config/         evaluation protocol, label sets (A, B, P5), features, news
+reports/        committed results per phase (CSV / JSON): the source of every generated table
+tests/          leakage, labels, experiments, overfitting, live system, report consistency
+docs/           FINDINGS, PROGRESS, SCOPE, RUNBOOK, FEASIBILITY, REFERENCE_NOTES
 deploy/         cron / systemd / launchd examples (generic paths)
-docs/           RUNBOOK.md
 Dockerfile, docker-compose.yml   container setup for the live system
-feasibility.py  read-only data-source checks behind FEASIBILITY.md
 ```
 
 ## Reproducing
@@ -141,40 +146,40 @@ uv sync
 The research pipeline, in order (each step writes under `data/` or `reports/`):
 
 ```bash
-uv run python -m mbpe.ingest                                   # Binance archive -> clean Parquet + gap report
-uv run python -m mbpe.sources.gdelt_bq dry-run                 # bytes the backfill will scan (free)
-uv run python -m mbpe.sources.gdelt_bq run                     # GDELT headline backfill (BigQuery)
+uv run python -m mbpe.data.ingest                                   # Binance archive -> clean Parquet + gap report
+uv run python -m mbpe.data.gdelt_backfill dry-run                 # bytes the backfill will scan (free)
+uv run python -m mbpe.data.gdelt_backfill run                     # GDELT headline backfill (BigQuery)
 uv run python -m mbpe.labels.triple_barrier config/labels.yaml     # label set A (and config/labels_B.yaml)
 uv run python -m mbpe.features.market                          # market, derivatives, MACD/EMA, mark/premium features
-uv run python -m mbpe.features.dedup                           # near-duplicate headline clusters
+uv run python -m mbpe.features.news_dedup                           # near-duplicate headline clusters
 uv run python -m mbpe.features.sentiment score-all             # FinBERT / CryptoBERT scores
 uv run python -m mbpe.features.news                            # news, calendar and regulatory features
-uv run python -m mbpe.validation.harness                       # Phase 3 step 1
-uv run python -m mbpe.validation.tuning --rung 1               # capped tuning, one process per rung (1-3)
-uv run python -m mbpe.validation.step2                         # Phase 3 step 2
-uv run python -m mbpe.validation.overfitting                   # deflated Sharpe ratio, PBO
-uv run python -m mbpe.ingest 2023-01-01 --only book_depth      # Phase 4 order-book data
-uv run python -m mbpe.features.phase4                          # NFP + order-book features
-uv run python -m mbpe.validation.phase4                        # Phase 4 evaluation
+uv run python -m mbpe.research.experiment                       # Phase 3 step 1
+uv run python -m mbpe.research.tuning --rung 1               # capped tuning, one process per rung (1-3)
+uv run python -m mbpe.research.phase3_tuned                         # Phase 3 step 2
+uv run python -m mbpe.research.overfitting                   # deflated Sharpe ratio, PBO
+uv run python -m mbpe.data.ingest 2023-01-01 --only book_depth      # Phase 4 order-book data
+uv run python -m mbpe.features.nfp_and_orderbook                          # NFP + order-book features
+uv run python -m mbpe.research.phase4                        # Phase 4 evaluation
 uv run python -m mbpe.labels.triple_barrier config/labels_P5.yaml  # Phase 5 labels
-uv run python -m mbpe.validation.phase5 step2                  # Phase 5 evaluation
-uv run python -m mbpe.validation.phase6_eval                   # Phase 6 evaluation (three-class + meta + SHAP)
-uv run python -m mbpe.reports.progress --check                 # generated tables match reports/
+uv run python -m mbpe.research.phase5 step2                  # Phase 5 evaluation
+uv run python -m mbpe.research.phase6_evaluation                   # Phase 6 evaluation (three-class + meta + SHAP)
+uv run python -m mbpe.reporting.generated_tables --check                 # generated tables match reports/
 uv run pytest
 ```
 
-The mark-price and premium-index data come from `mbpe.ingest` (`--only mark_price_1m` / `premium_index_1m` from 2020-09-01).
+The mark-price and premium-index data come from `mbpe.data.ingest` (`--only mark_price_1m` / `premium_index_1m` from 2020-09-01).
 
 The live system:
 
 ```bash
-uv run python -m mbpe.live.model freeze --threshold val        # frozen model -> data/models/phase6/<version>/
-uv run python -m mbpe.live.run --model data/models/phase6/<version>   # one hourly cycle
+uv run python -m mbpe.live.frozen_model freeze --threshold val        # frozen model -> data/models/phase6/<version>/
+uv run python -m mbpe.live.hourly_run --model data/models/phase6/<version>   # one hourly cycle
 uv run python -m mbpe.live.parity                              # live vs archive
 ```
 
-- The CryptoBERT comparison uses `config/news_cryptobert.yaml` and `mbpe.validation.cryptobert_compare` (`tune`, then `evaluate`).
-- `mbpe.validation.holdout` runs the **spent** holdout. Re-running it appends to the access log and must be reported as a second access.
+- The CryptoBERT comparison uses `config/news_cryptobert.yaml` and `mbpe.research.phase3_cryptobert` (`tune`, then `evaluate`).
+- `mbpe.research.phase3_holdout` runs the **spent** holdout. Re-running it appends to the access log and must be reported as a second access.
 
 ## Limitations
 - **Narrow scope:** one instrument (BTCUSDT perpetual) and one barrier geometry per phase.
@@ -184,9 +189,9 @@ uv run python -m mbpe.live.parity                              # live vs archive
 - **Open-interest timing:** the archive labels open-interest snapshots 5 minutes earlier than the live API. The backtests may have used the snapshot taken at the decision time rather than strictly before it. It's available within seconds, before the 1-minute entry, so it's tradable, and it could only have flattered results that showed no edge.
 - **The forward test runs on a laptop:** hours missed while it sleeps count as no decision, which slows the path to 100 trades.
 
-Details are in `reports/FINDINGS.md` ("Limitations" and each phase's notes) and `SCOPE.md`.
+Details are in `docs/FINDINGS.md` ("Limitations" and each phase's notes) and `docs/SCOPE.md`.
 
 ## Attribution
-- `cscv_pbo` in `mbpe/validation/overfitting.py` is adapted from [LLM-Auto-Trader](https://github.com/Erfaniaa/LLM-Auto-Trader) (MIT, © 2026 Erfan Alimohammadi); the license is in `licenses/`.
+- `cscv_pbo` in `mbpe/research/overfitting.py` is adapted from [LLM-Auto-Trader](https://github.com/Erfaniaa/LLM-Auto-Trader) (MIT, © 2026 Erfan Alimohammadi); the license is in `licenses/`.
 - [freqtrade](https://github.com/freqtrade/freqtrade) (GPL) was consulted for ideas only; no code was copied.
 - Sentiment models: FinBERT (primary) and CryptoBERT (secondary comparison), via Hugging Face `transformers`.

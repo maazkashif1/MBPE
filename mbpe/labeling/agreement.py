@@ -1,19 +1,10 @@
-"""Agreement of each sentiment scorer with a set of headline labels (benchmark ids only).
-
-Usage: uv run python -m mbpe.labeling.agreement [LABELS_CSV]
-       (default data/labeling/llm_labels.csv: LLM-judged sanity-check labels; labeling/labels.csv = human)
-
-Scorer label = argmax of (p_pos, p_neg, p_neu) on the sample titles (data/labeling/sample_scores.parquet).
-Report-only: per SCOPE.md, FinBERT is the primary scorer regardless of these numbers.
-"""
-
 import sys
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from mbpe.labeling.label import EXCLUDED, excluded_ids
+from mbpe.labeling.label_tool import EXCLUDED, excluded_ids
 
 SCORES = Path("data/labeling/sample_scores.parquet")
 DEFAULT_LABELS = Path("data/labeling/llm_labels.csv")

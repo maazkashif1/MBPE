@@ -1,5 +1,3 @@
-"""Tests for the walk-forward splitter, weights, holdout guard, simulator and harness."""
-
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -7,9 +5,9 @@ import numpy as np
 import polars as pl
 import pytest
 
-from mbpe.validation.backtest import blackout, simulate
-from mbpe.validation.harness import SIDES, run_label_set, rung_features, summarize
-from mbpe.validation.walk_forward import (
+from mbpe.research.backtest import blackout, simulate
+from mbpe.research.experiment import SIDES, run_label_set, rung_features, summarize
+from mbpe.research.walk_forward import (
     HoldoutError,
     guard_holdout,
     load_eval_config,
@@ -24,7 +22,6 @@ HOUR, MIN = 3_600_000, 60_000
 
 
 def hourly(start: datetime, end: datetime, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    """Hourly decision times with label windows of 2-241 minutes (like the 4 h triple barrier)."""
     d = np.arange(to_ms(start), to_ms(end), HOUR, dtype=np.int64)
     return d, d + np.random.default_rng(seed).integers(2, 242, len(d)) * MIN
 
@@ -43,19 +40,17 @@ def test_no_training_or_validation_label_window_overlaps_its_test_fold_or_embarg
         m = split(d, e, f, CFG)
         for part in ("train", "val"):
             dd, ee = d[m[part]], e[m[part]]
-            assert (ee < f.test_start).all(), (f.index, part)  # window ends before the fold
-            assert not ((dd >= f.test_end) & (dd < f.test_end + CFG.embargo_hours * HOUR)).any()  # embargo
+            assert (ee < f.test_start).all(), (f.index, part)
+            assert not ((dd >= f.test_end) & (dd < f.test_end + CFG.embargo_hours * HOUR)).any()
             assert not ((dd < f.test_end) & (ee >= f.test_start)).any()
         val_start = d[m["val"]].min()
-        assert (e[m["train"]] < val_start).all()  # train purged against validation
+        assert (e[m["train"]] < val_start).all()
         assert not (m["train"] & m["val"]).any() and not ((m["train"] | m["val"]) & m["test"]).any()
         assert m["val"].sum() > 0.15 * (m["train"].sum() + m["val"].sum())
 
 
 def test_uniqueness_on_hand_built_example():
-    # windows in minutes: A [0,4), B [2,6), C [0,2)
     w = uniqueness(np.array([0, 2, 0]) * MIN, np.array([4, 6, 2]) * MIN)
-    # minute: 0,1 -> A,C (1/2 each); 2,3 -> A,B (1/2); 4,5 -> B alone (1)
     assert w == pytest.approx([0.5, 0.75, 0.5])
     assert uniqueness(np.array([0]) * MIN, np.array([10]) * MIN) == pytest.approx([1.0])
 
@@ -70,12 +65,12 @@ def test_holdout_guard(tmp_path):
     leaky_exit = pl.DataFrame(
         {"decision_time": [h - timedelta(hours=1)], "short_exit_time": [h + timedelta(hours=1)]}
     )
-    with pytest.raises(HoldoutError):  # an outcome reaching into the holdout counts too
+    with pytest.raises(HoldoutError):
         guard_holdout(leaky_exit, CFG, log=tmp_path / "log.jsonl")
     guard_holdout(df, CFG, allow_holdout=True, reason="test", log=tmp_path / "log.jsonl")
     entry = json.loads((tmp_path / "log.jsonl").read_text().splitlines()[-1])
     assert entry["rows"] == 1 and entry["reason"] == "test"
-    guard_holdout(df.head(1), CFG, log=tmp_path / "log.jsonl")  # pre-holdout rows pass silently
+    guard_holdout(df.head(1), CFG, log=tmp_path / "log.jsonl")
 
 
 def test_position_rule_never_allows_two_open_trades():
@@ -86,10 +81,9 @@ def test_position_rule_never_allows_two_open_trades():
         sl, ss = rng.random(len(d)) < p, rng.random(len(d)) < p
         idx, side = simulate(d, sl, ss, e_long, e_short)
         exits = np.where(side == 1, e_long[idx], e_short[idx])
-        assert (d[idx][1:] >= exits[:-1]).all()  # each entry after the previous exit: never two open
-        assert not (sl[idx] & ss[idx]).any()  # both signalled -> not taken
+        assert (d[idx][1:] >= exits[:-1]).all()
+        assert not (sl[idx] & ss[idx]).any()
         assert ((side == 1) == sl[idx]).all()
-        # greedy: every skipped single-side signal falls inside an open trade
         taken = set(idx.tolist())
         for i in np.flatnonzero(sl ^ ss):
             if i not in taken:
@@ -99,17 +93,15 @@ def test_position_rule_never_allows_two_open_trades():
 
 def test_blackout_window():
     ev = np.array([to_ms(datetime(2024, 1, 10, 13, 30, tzinfo=UTC))])
-    t = lambda h, m=0: to_ms(datetime(2024, 1, 10, h, m, tzinfo=UTC))  # noqa: E731
+
+    def t(h, m=0):
+        return to_ms(datetime(2024, 1, 10, h, m, tzinfo=UTC))
+
     blocked = blackout(np.array([t(9), t(9, 30), t(13), t(14), t(15)]), ev, 30, 240, 1)
-    # entry = t + 1 min; blocked if 13:30 is in [entry - 30 min, entry + 4 h]
     assert blocked.tolist() == [False, True, True, False, False]
 
 
-# ---------- harness on synthetic data ----------
-
-
 def synthetic_dataset(signal: float, seed: int = 0) -> pl.DataFrame:
-    """load_dataset layout: hourly rows Jan 2021 - Jul 2022, rung-1 features; feature 0 predicts R."""
     d, e_long = hourly(datetime(2021, 1, 1, tzinfo=UTC), datetime(2022, 7, 1, tzinfo=UTC), seed=seed)
     _, e_short = hourly(datetime(2021, 1, 1, tzinfo=UTC), datetime(2022, 7, 1, tzinfo=UTC), seed=seed + 1)
     rng = np.random.default_rng(seed)
@@ -133,7 +125,6 @@ def test_threshold_unchanged_when_test_fold_data_is_altered():
     df = synthetic_dataset(signal=0.5)
     folds = make_folds(CFG)[:2]
     _, th = run_label_set("A", CFG, models=("logreg", "lgbm"), rungs={1: ("technical",)}, folds=folds, df=df)
-    # alter only the last fold's test period (earlier test periods are later folds' training data)
     in_test = pl.col("decision_time") >= datetime(2022, 4, 1, tzinfo=UTC)
     names = rung_features(1)
     noise = np.random.default_rng(9).normal(size=(df.height, len(names)))
@@ -160,7 +151,6 @@ def test_threshold_unchanged_when_test_fold_data_is_altered():
 
 
 def test_shuffled_labels_show_no_edge_but_real_labels_do():
-    """Harness sanity: with a real signal the model beats always-trade; with shuffled labels it doesn't."""
     df = synthetic_dataset(signal=0.6, seed=3)
     folds = make_folds(CFG)[:2]
     res = {}
@@ -178,18 +168,18 @@ def test_shuffled_labels_show_no_edge_but_real_labels_do():
         res[shuffled] = {r["strategy"]: r for r in ov.filter(pl.col("seed") == -1).iter_rows(named=True)}
     always = (res[False]["always_long"]["mean_R"] + res[False]["always_short"]["mean_R"]) / 2
     real = res[False]["logreg"]
-    assert real["trades"] > 100 and real["ci_lo"] > always  # the harness finds a real signal
+    assert real["trades"] > 100 and real["ci_lo"] > always
     fake = res[True].get("logreg_shuffled")
     if fake is not None and fake["trades"]:
-        assert fake["ci_lo"] <= always + 0.05  # no edge beyond always-trade from shuffled labels
+        assert fake["ci_lo"] <= always + 0.05
         assert fake["mean_R"] < real["ci_lo"]
 
 
 def test_tuning_never_uses_the_test_fold():
-    from mbpe.validation.tuning import tune
+    from mbpe.research.tuning import tune
 
     df = synthetic_dataset(signal=0.5, seed=4)
-    fold = make_folds(CFG)[1]  # 2022Q2: its test period is the last quarter of the synthetic data
+    fold = make_folds(CFG)[1]
     trials, best = tune(CFG, 1, n_trials=3, folds=[fold], df=df)
     in_test = pl.col("decision_time") >= datetime(2022, 4, 1, tzinfo=UTC)
     altered = df.with_columns(
@@ -218,7 +208,6 @@ def test_volatility_baseline_trades_only_high_atr_hours():
     traded = vol.with_columns(pl.col("decision_time").cast(pl.Datetime("ms", "UTC"))).join(
         atr, on="decision_time"
     )
-    # every traded hour's ATR is at least the cutoff, which sits well above the fold's median ATR
     for f in folds:
         t = traded.filter(pl.col("fold") == f.index)
         test_atr = df.filter(

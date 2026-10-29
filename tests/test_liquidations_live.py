@@ -1,18 +1,27 @@
-"""Liquidation collector without network access: a fake WebSocket on the combined stream."""
-
 import json
 from datetime import UTC, datetime, timedelta
 
 from websocket import WebSocketConnectionClosedException, WebSocketTimeoutException
 
-from mbpe.sources import liquidations_live as ll
+from mbpe.data import liquidations as ll
 
 T0 = datetime(2026, 10, 28, 12, 0, tzinfo=UTC)
 
 
 def liq(side: str, qty: str, ms: int) -> str:
-    o = {"s": "BTCUSDT", "S": side, "o": "LIMIT", "f": "IOC", "q": qty, "p": "80000.0", "ap": "80010.5",
-         "X": "FILLED", "l": qty, "z": qty, "T": ms}  # fmt: skip
+    o = {
+        "s": "BTCUSDT",
+        "S": side,
+        "o": "LIMIT",
+        "f": "IOC",
+        "q": qty,
+        "p": "80000.0",
+        "ap": "80010.5",
+        "X": "FILLED",
+        "l": qty,
+        "z": qty,
+        "T": ms,
+    }
     return json.dumps({"stream": "btcusdt@forceOrder", "data": {"e": "forceOrder", "E": ms + 3, "o": o}})
 
 
@@ -44,9 +53,9 @@ def test_events_coverage_and_reconnect(tmp_path, monkeypatch):
         FakeWS(
             [MARK, liq("SELL", "0.5", 1), MARK, liq("BUY", "1.25", 2), WebSocketConnectionClosedException()]
         ),
-        FakeWS([MARK, MARK, ""]),  # server close
+        FakeWS([MARK, MARK, ""]),
     ]
-    fails = [ConnectionError("dns")]  # one failed connect between the two connections
+    fails = [ConnectionError("dns")]
 
     def connect():
         if len(sockets) == 1 and fails:
@@ -58,7 +67,7 @@ def test_events_coverage_and_reconnect(tmp_path, monkeypatch):
     assert ev["side"].to_list() == ["SELL", "BUY"] and ev["qty"].to_list() == [
         0.5,
         1.25,
-    ]  # mark price not stored
+    ]
     assert ev["event_time"][0] == datetime.fromtimestamp(0.004, UTC)
     assert kinds(tmp_path) == ["start", "end", "start", "end"]
     cov = ll.load_coverage(tmp_path)
@@ -66,7 +75,6 @@ def test_events_coverage_and_reconnect(tmp_path, monkeypatch):
 
 
 def test_silent_connection_is_never_covered(tmp_path, monkeypatch):
-    """The legacy /ws/ path accepts connections but sends nothing: that must not count as coverage."""
     slept = []
     monkeypatch.setattr(ll.time, "sleep", slept.append)
     ws = FakeWS([WebSocketTimeoutException()])
@@ -88,22 +96,39 @@ def test_heartbeat_while_data_flows(tmp_path, monkeypatch):
     ws = FakeWS([MARK] * 7 + [""])
     ll.run(lambda: ws, root=tmp_path, clock=lambda: next(ticks), max_connections=1)
     k = kinds(tmp_path)
-    assert k[0] == "start" and k[-1] == "end" and k.count("alive") == 2  # at 75 s and 150 s
+    assert k[0] == "start" and k[-1] == "end" and k.count("alive") == 2
 
 
 def test_crash_without_end_record_still_counts_until_last_alive(tmp_path):
-    lines = [{"conn": "c1", "kind": "start", "t": T0.isoformat()},
-             {"conn": "c1", "kind": "alive", "t": (T0 + timedelta(minutes=5)).isoformat()}]  # fmt: skip
+    lines = [
+        {"conn": "c1", "kind": "start", "t": T0.isoformat()},
+        {"conn": "c1", "kind": "alive", "t": (T0 + timedelta(minutes=5)).isoformat()},
+    ]
     (tmp_path / "coverage.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
     cov = ll.load_coverage(tmp_path).row(0, named=True)
     assert cov["start"] == T0 and cov["end"] == T0 + timedelta(minutes=5)
 
 
 def test_parses_a_real_binance_event():
-    # captured from wss://fstream.binance.com/market/ws/!forceOrder@arr, 2026-10-28 ("ps", "st" ignored)
-    real = {"e": "forceOrder", "E": 1793211536368, "o": {"s": "XANUSDT", "S": "BUY", "o": "LIMIT", "f": "IOC",
-            "q": "2094", "p": "0.0113162", "ap": "0.0111490", "X": "FILLED", "l": "2094", "z": "2094",
-            "T": 1793211535363, "ps": "XANUSDT", "st": 1}}  # fmt: skip
+    real = {
+        "e": "forceOrder",
+        "E": 1793211536368,
+        "o": {
+            "s": "XANUSDT",
+            "S": "BUY",
+            "o": "LIMIT",
+            "f": "IOC",
+            "q": "2094",
+            "p": "0.0113162",
+            "ap": "0.0111490",
+            "X": "FILLED",
+            "l": "2094",
+            "z": "2094",
+            "T": 1793211535363,
+            "ps": "XANUSDT",
+            "st": 1,
+        },
+    }
     r = ll.parse(real, T0)
     assert (r["side"], r["qty"], r["avg_price"], r["status"], r["trade_time"]) == (
         "BUY",
