@@ -151,10 +151,15 @@ def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root:
     usdc = step("load_usdc", btcusdc.load)
     if data is not None and fz is not None and usdc is not None:
         candles, funding, atr_c = usdc["futures_klines_1m"], usdc["funding"], data["futures_klines_1m"]
-        step("paper", lambda: paper.step(now, candles, funding, decision, fz.version, root / "paper", atr_c))
+        lag = (t - int(candles["open_time"].max().timestamp() * 1000) - 60_000) / 60_000
+        trade = decision
+        if lag > STALE_MIN["futures_klines_1m"] and (decision or {}).get("decision") in ("long", "short"):
+            alert("stale_source", f"btcusdc: last candle {lag:.0f} min before t; no new paper orders", root)
+            rec["paper_note"], trade = "btcusdc data stale; no new paper orders this hour", None
+        step("paper", lambda: paper.step(now, candles, funding, trade, fz.version, root / "paper", atr_c))
         step(
             "paper_b",
-            lambda: _paper_b_step(now, candles, funding, decision, fz.version, root / "paper_b", atr_c),
+            lambda: _paper_b_step(now, candles, funding, trade, fz.version, root / "paper_b", atr_c),
         )
     if now.hour == 0 and now.minute < 30:
         step("daily_summary", lambda: daily_summary(now, root))

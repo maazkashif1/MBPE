@@ -135,3 +135,58 @@ def test_late_run_makes_no_decision(faked):
     rec = lr.run_hourly(NOW + timedelta(minutes=40), root=root)
     assert rec["decision"] == "none" and rec["reason"].startswith("late run") and calls["predict"] == 0
     assert calls["paper"] == 1
+
+
+def usdc_frames(last_ms: int, price: float) -> dict:
+    k = pl.DataFrame({"open_time": [last_ms - 60_000, last_ms], "close": [price, price]})
+    f = pl.DataFrame({"calc_time": [last_ms]})
+    cast = pl.col("*").exclude("close").cast(pl.Datetime("ms", "UTC"))
+    return {"futures_klines_1m": k.with_columns(cast), "funding": f.with_columns(cast)}
+
+
+def capture_paper(monkeypatch, got):
+    from mbpe.live import paper_trading as paper
+
+    def pstep(now, candles, funding, decision, version, root, atr_candles=None):
+        got.update(candles=candles, atr=atr_candles, decision=decision)
+        return []
+
+    monkeypatch.setattr(paper, "step", pstep)
+
+
+def test_paper_trades_btcusdc_with_btcusdt_atr(faked, monkeypatch):
+    from mbpe.data import btcusdc
+
+    root, _, state = faked
+    usdc = usdc_frames(T, 81000.0)
+    monkeypatch.setattr(btcusdc, "load", lambda: usdc)
+    got = {}
+    capture_paper(monkeypatch, got)
+    rec = lr.run_hourly(NOW, root=root)
+    assert got["candles"] is usdc["futures_klines_1m"]
+    assert got["atr"] is state["data"]["futures_klines_1m"]
+    assert got["decision"]["decision"] == "long" and "paper_note" not in rec
+
+
+def test_stale_btcusdc_blocks_new_orders_and_alerts(faked, monkeypatch):
+    from mbpe.data import btcusdc
+
+    root, _, _ = faked
+    monkeypatch.setattr(btcusdc, "load", lambda: usdc_frames(T - 30 * 60_000, 81000.0))
+    got = {}
+    capture_paper(monkeypatch, got)
+    rec = lr.run_hourly(NOW, root=root)
+    assert got["decision"] is None and rec["decision"] == "long"
+    assert "btcusdc" in (root / "alerts.jsonl").read_text()
+
+
+def test_btcusdc_failure_still_logs_the_decision(faked, monkeypatch):
+    from mbpe.data import btcusdc
+
+    root, calls, _ = faked
+    monkeypatch.setattr(btcusdc, "load", lambda: (_ for _ in ()).throw(OSError("store missing")))
+    rec = lr.run_hourly(NOW, root=root)
+    assert rec["steps"]["load_usdc"].startswith("failed: OSError")
+    assert calls["paper"] == 0 and "paper" not in rec["steps"]
+    logged = [json.loads(x) for x in (root / "predictions.jsonl").read_text().splitlines()]
+    assert logged[-1]["decision"] == "long"
