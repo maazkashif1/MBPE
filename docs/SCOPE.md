@@ -297,6 +297,18 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
     - `dashboard/`: a local web page (localhost only) reading `data/live/`. It writes nothing and changes no decision.
   - **Effect:** none on any result or on the forward test.
 - **2026-10-29: Test B added to the hourly run as a separate `paper_b` step writing to `data/live/paper_b/`; Test A's code, files and behaviour are unchanged.**
+- **2026-10-29 (owner's decision): Tests A and B move to the BTCUSDC contract and restart.**
+  - **Reason:** Binance's published regular-user fees are lower on the USDC-margined BTCUSDC perpetual (0.04% taker, 0% maker under the current promotion, against 0.05% / 0.02% on BTCUSDT). The owner chose to run both forward tests on the cheaper contract.
+  - **Decisions unchanged:** the same frozen model (f4c4365501a9272b), the same threshold (0.30909969344992666), the same BTCUSDT inputs the model was trained on, the same hourly schedule and decision rules.
+  - **Execution moves to BTCUSDC**, for both tests:
+    - entry prices, fills, stops, targets and the 4-hour exit use BTCUSDC 1-minute candles;
+    - funding uses BTCUSDC's own funding rates;
+    - the stop and target distances still use BTCUSDT's 1h ATR (the model's own input), applied to the BTCUSDC price.
+  - **Fees:** Binance's published regular-user BTCUSDC rates in force when a trade happens, plus 2 bps slippage on every market fill (taker entry, stop and time exit). From this amendment: 0.04% taker and 0% maker. If the published rate changes, the new rate applies from that date as a dated amendment, and every trade records the rates it paid. All other Test A and Test B rules are unchanged.
+  - **Restart:** both tests restart at the first hour after this change goes live (start record below). Earlier BTCUSDT records (Test A from 13:00 UTC, Test B from 18:00 UTC on 2026-10-29) are moved to `data/live/archive/btcusdt/`, reported separately and never mixed into the restarted tests.
+  - **Verdict:** unchanged rules, counted from the new start: ≥ 6 months **and** ≥ 100 closed trades per test. The always-long benchmark is computed on BTCUSDC with the same fees.
+  - **Unchanged as registered:** Test B's historical replay uses BTCUSDT history and costs (BTCUSDC has too little history for folds 4–17); it is labelled that way.
+  - **Parity:** the daily check of paper trades against the label code uses the BTCUSDC data.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
