@@ -21,6 +21,7 @@
         </div>
       </div>
       <div class="topbar-right">
+        <span class="pill price" id="live-price" title="Live Bitcoin futures price from Binance">BTC —</span>
         <span class="pill" id="status-pill"><span class="dot"></span><span id="status-text">Loading</span></span>
         <span class="muted small" id="updated"></span>
         <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme">◐</button>
@@ -72,6 +73,18 @@
           <div class="bar"><span id="prog-trades"></span></div>
         </div>
         <p class="fine">The system is judged only once both bars are full. It passes if it made money on average after fees, by a margin too large to be luck, and did better than simply betting on the price going up every time.</p>
+      </article>
+
+      <article class="card span-3">
+        <div class="card-head"><h2>Test A vs Test B</h2><span class="badge" id="b-status">—</span></div>
+        <p class="fine">Same signals, same times. Test A buys and sells at market price (higher fee). Test B uses limit orders: a lower fee, but an order only counts if the price trades through it within 15 minutes, otherwise it is skipped.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th class="num">Test A (market orders)</th><th class="num">Test B (limit orders)</th></tr></thead>
+            <tbody id="ab-rows"></tbody>
+          </table>
+        </div>
+        <p class="fine" id="b-orders"></p>
       </article>
 
       <article class="card span-2">

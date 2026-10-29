@@ -74,7 +74,38 @@ function renderKpis(t, f) {
   $("kpi-closed-sub").textContent = `of the ${f.trades_target} needed before judging`;
 }
 
+let openPos = null;
+let livePrice = null;
+
+function renderLive() {
+  const tick = $("live-price");
+  tick.textContent = livePrice === null ? "BTC —" : `BTC ${fmtPrice(livePrice)}`;
+  const p = openPos;
+  if (!p || livePrice === null || !$("pos-now")) return;
+  const unit = Math.abs(p.entry_price - p.sl);
+  const r = unit ? ((p.side === "long" ? 1 : -1) * (livePrice - p.entry_price)) / unit : null;
+  setText("pos-now", fmtPrice(livePrice));
+  setText("pos-pnl", fmtUsd(r), sign(r));
+  const mark = $("pos-mark");
+  if (mark) mark.style.left = `${Math.min(100, Math.max(0, ((livePrice - p.sl) / (p.tp - p.sl)) * 100))}%`;
+}
+
+function connectPrice(delay = 1000) {
+  let ws;
+  try { ws = new WebSocket("wss://fstream.binance.com/market/ws/btcusdt@miniTicker"); } catch (_) { return; }
+  ws.onopen = () => { delay = 1000; $("live-price").classList.add("on"); };
+  ws.onmessage = (ev) => {
+    const c = parseFloat(JSON.parse(ev.data).c);
+    if (Number.isFinite(c)) { livePrice = c; renderLive(); }
+  };
+  ws.onclose = () => {
+    $("live-price").classList.remove("on");
+    setTimeout(() => connectPrice(Math.min(delay * 2, 30000)), delay);
+  };
+}
+
 function renderPosition(p) {
+  openPos = p;
   const body = $("position-body");
   body.replaceChildren();
   const badge = $("pos-side");
@@ -85,15 +116,15 @@ function renderPosition(p) {
   }
   badge.textContent = p.side === "long" ? "▲ Betting price goes up" : "▼ Betting price goes down";
   const grid = el("div", { class: "pos-grid" });
-  const cell = (label, value, cls) => {
+  const cell = (label, value, cls, id) => {
     const d = el("div");
-    d.append(el("span", { class: "label" }, label), el("span", { class: `value ${cls || ""}` }, value));
+    d.append(el("span", { class: "label" }, label), el("span", { class: `value ${cls || ""}`, ...(id ? { id } : {}) }, value));
     return d;
   };
   grid.append(
     cell("Bitcoin price at entry", fmtPrice(p.entry_price)),
-    cell("Bitcoin price now", fmtPrice(p.last_price)),
-    cell("Profit / loss so far", fmtUsd(p.unrealized_gross_R), sign(p.unrealized_gross_R)),
+    cell("Bitcoin price now", fmtPrice(p.last_price), "", "pos-now"),
+    cell("Profit / loss so far (before fees)", fmtUsd(p.unrealized_gross_R), sign(p.unrealized_gross_R), "pos-pnl"),
     cell("Closes by", fmtTime(p.horizon_end)),
   );
   const lo = p.sl, hi = p.tp;
@@ -102,10 +133,11 @@ function renderPosition(p) {
   const entry = el("span", { class: "mark entry", style: `left:${pos(p.entry_price)}` });
   const entryTag = el("span", { class: "tag", style: `left:${pos(p.entry_price)}` }, "entry");
   range.append(entry, entryTag);
-  if (p.last_price) range.append(el("span", { class: "mark now", style: `left:${pos(p.last_price)}`, title: `now ${fmtPrice(p.last_price)}` }));
+  if (p.last_price) range.append(el("span", { class: "mark now", id: "pos-mark", style: `left:${pos(p.last_price)}`, title: "now" }));
   const ends = el("div", { class: "range-ends" });
   ends.append(el("span", {}, `Stop-loss ${fmtPrice(p.sl)} (−${usd(RISK_USD)})`), el("span", {}, `Target ${fmtPrice(p.tp)}`));
   body.append(grid, range, ends);
+  renderLive();
 }
 
 function renderProgress(f) {
@@ -269,6 +301,30 @@ function renderTrades(trades) {
   }
 }
 
+function renderTestB(a, b) {
+  $("b-status").textContent = b.running ? "Running" : "Starts at the next hourly run";
+  const body = $("ab-rows");
+  body.replaceChildren();
+  const ta = a, tb = b.trades;
+  const rows = [
+    ["Finished trades", `${ta.closed}`, `${tb.closed}`],
+    ["Profit / loss after fees", fmtUsd(ta.net_R), fmtUsd(tb.net_R), ta.net_R, tb.net_R],
+    ["Win rate", fmtPct(ta.win_rate), fmtPct(tb.win_rate)],
+    ["Average per trade", fmtUsd(ta.mean_R), fmtUsd(tb.mean_R), ta.mean_R, tb.mean_R],
+  ];
+  for (const [label, va, vb, sa, sb] of rows) {
+    const tr = el("tr");
+    tr.append(el("td", {}, label), el("td", { class: `num ${sign(sa) || ""}` }, va), el("td", { class: `num ${sign(sb) || ""}` }, vb));
+    body.append(tr);
+  }
+  const filled = tb.closed;
+  const placed = b.orders;
+  const pend = b.pending ? ` · 1 order waiting to fill or close (${b.pending.side === 1 ? "▲ up" : "▼ down"})` : "";
+  $("b-orders").textContent = placed
+    ? `Test B orders placed: ${placed} · filled and finished: ${filled} · not filled: ${b.unfilled}${filled + b.unfilled ? ` · fill rate ${fmtPct(filled / (filled + b.unfilled), 0)}` : ""}${pend}`
+    : "Test B has placed no orders yet. It acts on the same signals as Test A from its start time onward.";
+}
+
 let latest = null;
 async function refresh() {
   try {
@@ -285,6 +341,7 @@ async function refresh() {
     renderCells(s.decisions);
     renderHealth(s);
     renderTrades(s.recent_trades);
+    renderTestB(s.trades, s.test_b);
   } catch (e) {
     $("status-pill").className = "pill warn";
     $("status-text").textContent = "Dashboard error";
@@ -307,4 +364,5 @@ $("theme-toggle").addEventListener("click", () => {
 window.addEventListener("resize", () => latest && renderEquity(latest));
 
 refresh();
-setInterval(refresh, 30000);
+setInterval(refresh, 15000);
+connectPrice();

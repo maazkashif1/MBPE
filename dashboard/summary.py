@@ -115,6 +115,23 @@ def decision_stats(preds: list[dict], now: datetime) -> dict:
     }
 
 
+def test_b(live: Path) -> dict:
+    led = read_jsonl(live / "paper_b" / "ledger.jsonl")
+    closes = sorted((e for e in led if e["event"] == "close"), key=lambda e: e["exit_time"])
+    state_p = live / "paper_b" / "state.json"
+    state = json.loads(state_p.read_text()) if state_p.exists() else {}
+    stats = trade_stats(closes)
+    stats.pop("equity")
+    return {
+        "running": state_p.exists(),
+        "orders": sum(e["event"] == "order" for e in led),
+        "unfilled": sum(e["event"] == "unfilled" for e in led),
+        "pending": state.get("pending"),
+        "trades": stats,
+        "recent": list(reversed(closes[-5:])),
+    }
+
+
 def collectors(raw: Path, now: datetime) -> dict:
     rss = sorted(raw.glob("rss_live/*/*.json"))
     rss_last = json.loads(rss[-1].read_text()) if rss else None
@@ -192,4 +209,5 @@ def build(root: Path = Path("data"), now: datetime | None = None) -> dict:
         "collectors": collectors(root / "raw", now),
         "alerts_24h": alerts[-20:],
         "parity": json.loads(parity[-1].read_text()) if parity else None,
+        "test_b": test_b(live),
     }

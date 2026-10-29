@@ -236,3 +236,6 @@ td.empty { text-align: center; padding: 22px; }
   .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar-right .small { display: none; }
 }
+
+.pill.price { font-variant-numeric: tabular-nums; opacity: 0.6; }
+.pill.price.on { opacity: 1; }

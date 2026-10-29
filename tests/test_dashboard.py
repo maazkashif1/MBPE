@@ -81,3 +81,17 @@ def test_unrealized_r_follows_the_side():
     assert summary.open_position({"open": long}, 101.0)["unrealized_gross_R"] == 0.5
     assert summary.open_position({"open": short}, 101.0)["unrealized_gross_R"] == -0.5
     assert summary.open_position({"open": None}, 101.0) is None
+
+
+def test_test_b_summary(tmp_path):
+    b = tmp_path / "paper_b"
+    write_jsonl(
+        b / "ledger.jsonl",
+        [{"event": "order"}, {"event": "unfilled"}, {"event": "order"}, close(4, 1.9), {"event": "order"}],
+    )
+    (b / "state.json").write_text(json.dumps({"pending": {"side": -1}, "free_ms": 0, "seen": []}))
+    out = summary.test_b(tmp_path)
+    assert out["running"] and (out["orders"], out["unfilled"]) == (3, 1)
+    assert out["trades"]["closed"] == 1 and out["trades"]["net_R"] == pytest.approx(1.9)
+    assert out["pending"] == {"side": -1} and "equity" not in out["trades"]
+    assert summary.test_b(tmp_path / "missing")["running"] is False
