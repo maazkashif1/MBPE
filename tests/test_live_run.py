@@ -78,6 +78,20 @@ def test_failed_source_is_alerted_and_the_run_continues(faked):
     assert (root / "features" / "2026-11.parquet").exists() and len(rec["features_sha256"]) == 64
 
 
+def test_test_b_failure_never_touches_test_a(faked, monkeypatch):
+    from mbpe.live import paper_trading_b as paper_b
+
+    root, calls, _ = faked
+
+    def boom(*a, **k):
+        raise RuntimeError("test b down")
+
+    monkeypatch.setattr(paper_b, "step", boom)
+    rec = lr.run_hourly(NOW, root=root)
+    assert rec["steps"]["paper"] == "ok" and rec["steps"]["paper_b"].startswith("failed: RuntimeError")
+    assert rec["decision"] == "long" and calls["paper"] == 1
+
+
 def test_same_hour_is_logged_once(faked):
     root, calls, _ = faked
     lr.run_hourly(NOW, root=root)

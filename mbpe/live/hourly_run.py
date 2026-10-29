@@ -1,4 +1,5 @@
 import hashlib
+import importlib
 import json
 import logging
 import sys
@@ -12,7 +13,6 @@ import polars as pl
 from mbpe.features.news import load_calendar
 from mbpe.live import frozen_model as lmod
 from mbpe.live import paper_trading as paper
-from mbpe.live import paper_trading_b as paper_b
 from mbpe.research.backtest import blackout
 from mbpe.research.experiment import PHASE6_RUNG, rung_features
 from mbpe.research.phase6_models import META_VOL, cfg_p6
@@ -72,6 +72,10 @@ def save_features(row: pl.DataFrame, t: int, root: Path = LIVE) -> str:
     tmp.replace(p)
     x = row.select(rung_features(PHASE6_RUNG)).cast(pl.Float64).to_numpy()
     return hashlib.sha256(np.nan_to_num(x, nan=np.inf).tobytes()).hexdigest()
+
+
+def _paper_b_step(*args):
+    return importlib.import_module("mbpe.live.paper_trading_b").step(*args)
 
 
 def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root: Path = LIVE) -> dict:
@@ -146,7 +150,7 @@ def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root:
     if data is not None and fz is not None:
         candles, funding = data["futures_klines_1m"], data["funding"]
         step("paper", lambda: paper.step(now, candles, funding, decision, fz.version, root / "paper"))
-        step("paper_b", lambda: paper_b.step(now, candles, funding, decision, fz.version, root / "paper_b"))
+        step("paper_b", lambda: _paper_b_step(now, candles, funding, decision, fz.version, root / "paper_b"))
     if now.hour == 0 and now.minute < 30:
         step("daily_summary", lambda: daily_summary(now, root))
     return rec

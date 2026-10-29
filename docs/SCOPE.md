@@ -594,5 +594,12 @@ Implemented in `mbpe/live/`. These rules govern every forward-test decision and 
 
 **Historical replay (development evidence)**
 - Run once, after the live start; reported whatever it shows; rules not changed after it.
-- It runs every LightGBM walk-forward candidate in folds 4–17 with meta P ≥ that fold's validation threshold, in time order, through Test B's own book (rules 2–9).
+- Input: every LightGBM walk-forward candidate in folds 4–17 with meta P ≥ that fold's validation threshold, in time order, through Test B's own book (rules 2–9).
+- Report:
+  - decisions, attempted orders, fill rate;
+  - Test B's mean net R with 95% CI;
+  - the taker result (Test A's execution) on exactly the orders Test B attempted;
+  - Test A's actual walk-forward result over folds 4–17, for reference;
+  - the always-long benchmark over the same folds, as defined in the verdict.
+- Reported as generated tables in `docs/PROGRESS.md` and `docs/FINDINGS.md`, whatever it shows.
 - 2021–2026 data is spent, so this is development evidence only. It can't establish an edge.
