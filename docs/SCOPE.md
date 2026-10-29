@@ -310,6 +310,7 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Unchanged as registered:** Test B's historical replay uses BTCUSDT history and costs (BTCUSDC has too little history for folds 4–17); it is labelled that way.
   - **Parity:** the daily check of paper trades against the label code uses the BTCUSDC data.
   - **Stale BTCUSDC data:** if the BTCUSDC store's last 1m candle ends more than 5 minutes before the decision time, neither test opens a new position that hour (an alert is logged); open positions keep settling once data arrives. This matches the existing stale-input rule.
+  - **Start record (BTCUSDC restart):** first decision on BTCUSDC for both tests = **2026-10-29 19:00 UTC** (run at 19:03 by launchd), code commit b12002a. That run logged `usdc_top_up`, `load_usdc`, `paper` and `paper_b` as ok, and both tests started with empty state (no trade at 19:00: neither side had positive expected net R). Earliest verdict: 2027-04-29 19:00 UTC, and only with ≥ 100 closed trades per test.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
