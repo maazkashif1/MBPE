@@ -843,7 +843,7 @@ def test_b_replay() -> str:
         ),
         ("Test B mean net R [95% CI]", f"{_tb_ci(d['test_b'])} (n = {d['test_b']['n']:,})"),
         (
-            "taker on the same orders: mean net R [95% CI]",
+            "taker on the same attempted orders: mean net R [95% CI]",
             f"{_tb_ci(d['taker_same_orders'])} (n = {d['taker_same_orders']['n']:,})",
         ),
         (

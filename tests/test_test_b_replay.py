@@ -24,6 +24,13 @@ def _inputs():
             "close": [100.0] * n,
         }
     ).with_columns(pl.col("open_time").cast(pl.Datetime("ms", "UTC")))
+    flat = (pl.col("open_time") > T0 + timedelta(hours=40)) & (
+        pl.col("open_time") <= T0 + timedelta(hours=40, minutes=15)
+    )
+    candles = candles.with_columns(
+        low=pl.when(flat).then(100.0).otherwise(pl.col("low")),
+        high=pl.when(flat).then(100.0).otherwise(pl.col("high")),
+    )
     times = [T0 + timedelta(hours=h) for h in range(0, 96, 8)]
     funding = pl.DataFrame(
         {
@@ -80,8 +87,9 @@ def test_replay_on_synthetic_inputs(monkeypatch, tmp_path: Path):
     assert r["busy_skips"] > 0
     assert r["attempted"] == r["decisions"] - r["busy_skips"] - r["missing_candles"] - r["excluded_atr"]
     assert r["fill_rate"] == r["filled"] / r["attempted"]
-    assert r["filled"] == 3
-    assert r["taker_same_orders"]["n"] == 3
+    assert (r["attempted"], r["filled"]) == (3, 2)
+    assert r["missing_candles"] == 0 and r["excluded_atr"] == 0
+    assert r["taker_same_orders"]["n"] == r["attempted"]
     assert r["taker_same_orders"]["mean_R"] == np.mean([-0.1, -0.3, -0.5])
     assert r["always_long"]["decisions"] == 45
     assert (tmp_path / "replay.json").exists()

@@ -81,7 +81,9 @@ def replay(out: Path = OUT) -> dict:
     busy = sum(r["status"] == "skip" for r in res)
     missing = sum(r["status"] == "missing_candles" for r in res)
     attempted = len(closed) + len(unfilled)
-    taker = c.filter(pl.col("decision_time").is_in([r["decision_ms"] for r in closed]))["net_R_taker"]
+    taker = c.filter(pl.col("decision_time").is_in([r["decision_ms"] for r in closed + unfilled]))[
+        "net_R_taker"
+    ]
 
     test = np.zeros(len(d["decision"]), bool)
     for f in folds:
