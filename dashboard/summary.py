@@ -4,8 +4,8 @@ from pathlib import Path
 
 import polars as pl
 
-FORWARD_START = datetime(2026, 10, 29, 13, tzinfo=UTC)
-VERDICT_EARLIEST = datetime(2027, 4, 29, tzinfo=UTC)
+FORWARD_START = datetime(2026, 10, 29, 19, tzinfo=UTC)
+VERDICT_EARLIEST = datetime(2027, 4, 29, 19, tzinfo=UTC)
 TRADES_TARGET = 100
 RISK_PER_TRADE = 0.01
 HOUR = timedelta(hours=1)
@@ -77,6 +77,8 @@ def decision_stats(preds: list[dict], now: datetime) -> dict:
     if now.minute < 4:
         last_hour -= HOUR
     expected = max(0, int((last_hour - FORWARD_START) / HOUR) + 1)
+    start_ms = int(FORWARD_START.timestamp() * 1000)
+    preds = [p for p in preds if p["decision_ms"] >= start_ms]
     logged = {p["decision_ms"] for p in preds}
     counts = {"trade": 0, "no_side": 0, "meta_below": 0, "blackout": 0, "stale": 0, "late": 0}
     for p in preds:
@@ -152,7 +154,7 @@ def collectors(raw: Path, now: datetime) -> dict:
 
 
 def last_price(live: Path) -> tuple[float | None, str | None]:
-    p = live / "binance" / "futures_klines_1m.parquet"
+    p = live / "btcusdc" / "futures_klines_1m.parquet"
     if not p.exists():
         return None, None
     df = pl.read_parquet(p, columns=["open_time", "close"]).sort("open_time").tail(1)

@@ -79,7 +79,7 @@ let livePrice = null;
 
 function renderLive() {
   const tick = $("live-price");
-  tick.textContent = livePrice === null ? "BTC —" : `BTC ${fmtPrice(livePrice)}`;
+  tick.textContent = livePrice === null ? "BTCUSDC —" : `BTCUSDC ${fmtPrice(livePrice)}`;
   const p = openPos;
   if (!p || livePrice === null || !$("pos-now")) return;
   const unit = Math.abs(p.entry_price - p.sl);
@@ -92,7 +92,7 @@ function renderLive() {
 
 function connectPrice(delay = 1000) {
   let ws;
-  try { ws = new WebSocket("wss://fstream.binance.com/market/ws/btcusdt@miniTicker"); } catch (_) { return; }
+  try { ws = new WebSocket("wss://fstream.binance.com/market/ws/btcusdc@miniTicker"); } catch (_) { return; }
   ws.onopen = () => { delay = 1000; $("live-price").classList.add("on"); };
   ws.onmessage = (ev) => {
     const c = parseFloat(JSON.parse(ev.data).c);

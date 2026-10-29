@@ -428,6 +428,7 @@ Built to the scope doc's integration and paper-trading-readiness stage (`mbpe/li
 
 ### Forward test (running)
 - **The system:** the frozen LightGBM primary + meta-filter, trained on data before 2026-04-26, paper-traded from 2026-10-29 13:00 UTC. The model version and threshold are fixed in a start record committed before the first decision.
+- **Restart on BTCUSDC (amendment of 2026-10-29, the owner's decision):** from 2026-10-29 19:00 UTC both tests trade the USDC-margined BTCUSDC perpetual (published fees 0.04% taker / 0% maker, plus 2 bps slippage on market fills); decisions are unchanged and still made from BTCUSDT data. The six BTCUSDT hours before the restart (one Test A trade) are archived and reported separately; the 6-month and 100-trade conditions count from the restart.
 - **Threshold:** the meta-filter's validation-chosen threshold, not 0.60. At 0.60 the system would trade only rarely (meta-probability table above), so 100 trades would take years.
   - This was a dated amendment, **made after seeing the historical results**, in which this variant still lost money after costs. The forward test therefore has a negative historical expectation: it tests the scoped system as built, not a candidate edge.
 - **Verdict** (pre-registered): only after ≥ 6 months **and** ≥ 100 closed paper trades.

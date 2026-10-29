@@ -19,7 +19,7 @@ Every result number lives in [`docs/FINDINGS.md`](docs/FINDINGS.md) and [`docs/P
 | 4 | Three checklist extensions, each against rung 3: MACD/EMA, NFP release calendar + blackout, order-book depth (Binance `bookDepth`) | No extension passes the kill criterion; Phase 3 finding stands | `mbpe-research-v1.1` |
 | 5 | Longer horizon: 4-hourly decisions, 24 h trades, daily-ATR barriers, 20-permutation shuffled control | Pass criterion fails on all three conditions; no forward test | `mbpe-research-v1.2` |
 | 6 | The full scope doc: mark-price / premium-index and regulatory-news features; three-class primary model (LightGBM and CatBoost); meta-labeling filter on out-of-sample predictions; SHAP; targets table; regimes; failure cases; a live system and a paper-trading simulator | Historically, no configuration profitable after costs. The meta-filter helps a little, not enough to pay costs. Development evidence only | — |
-| Forward test | The frozen Phase 6 system, paper-traded live from **2026-10-29 13:00 UTC** | **Running.** No verdict before ≥ 6 months **and** ≥ 100 trades | — |
+| Forward test | The frozen Phase 6 system, paper-traded live on BTCUSDC from **2026-10-29 19:00 UTC** (restarted from 13:00 on BTCUSDT; `docs/SCOPE.md` amendment) | **Running.** No verdict before ≥ 6 months **and** ≥ 100 trades | — |
 
 - **The holdout was spent in Phase 3.** Phases 4–6 are walk-forward only, on data already studied, so their historical results are development evidence.
 - **Only the forward test is new, unseen data.**
@@ -36,7 +36,7 @@ Every result number lives in [`docs/FINDINGS.md`](docs/FINDINGS.md) and [`docs/P
 | `mbpe.data.liquidations`: Binance liquidation stream (forward-only data) | continuously |
 
 **Each hourly run:**
-1. Tops up Binance market data from the free REST API, into a separate live store. The archive is the source of record and is never modified.
+1. Tops up Binance market data from the free REST API, into a separate live store. The archive is the source of record and is never modified. BTCUSDC candles and funding, which both paper tests trade on, go to `data/live/btcusdc/`.
 2. Collects the newest GDELT batches, extends the news clusters, and scores new titles with FinBERT.
 3. Computes all 103 features at the decision time with **the same feature code as the backtest**.
 4. Applies the **frozen** model and logs the decision.

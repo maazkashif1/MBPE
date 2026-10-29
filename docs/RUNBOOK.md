@@ -59,6 +59,8 @@ http://localhost:8765 shows the net result, win rate, profit and losses, profit 
 |---|---|
 | `data/live/predictions.jsonl` | one record per decision hour (append-only) |
 | `data/live/features/<YYYY-MM>.parquet` | the feature row behind each decision |
+| `data/live/btcusdc/*.parquet` | BTCUSDC 1m candles and funding that Tests A and B trade on (extended each run) |
+| `data/live/archive/btcusdt/` | Test A and B records from before the BTCUSDC restart (2026-10-29 13:00–19:00 UTC) |
 | `data/live/paper/ledger.jsonl`, `state.json` | paper trades (append-only) and the open position |
 | `data/live/paper_b/ledger.jsonl`, `state.json` | Test B limit-order events (append-only) and the pending order |
 | `data/live/binance/*.parquet` | REST top-up newer than the archive (rebuilt each run; the archive is never modified) |
