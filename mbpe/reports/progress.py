@@ -1078,6 +1078,24 @@ def phase6_c_meta_p() -> str:
     return "\n".join(out) + "\n"
 
 
+@block("phase6_d_rest_archive")
+def phase6_d_rest_archive() -> str:
+    d = pl.read_csv(P6 / "live" / "rest_vs_archive.csv")
+    g = d.group_by("dataset", maintain_order=True).agg(
+        windows=pl.len(), archive=pl.col("archive_rows").sum(), rest=pl.col("rest_rows").sum(),
+        identical=pl.col("rows_identical").sum(),
+    )  # fmt: skip
+    out = [
+        "| dataset | 6 h windows | archive rows | REST rows | rows identical (every compared column) |",
+        "|---|---|---|---|---|",
+    ]
+    for r in g.iter_rows(named=True):
+        out.append(
+            f"| {r['dataset']} | {r['windows']} | {r['archive']:,} | {r['rest']:,} | {r['identical']:,} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 # ---------- FINDINGS.md headline numbers ----------
 
 

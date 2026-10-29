@@ -2082,3 +2082,66 @@ Worst headline trades:
 - `mbpe/validation/phase6_eval.py`: the run, the controls (Phase 3 definitions, at each strategy's per-fold frequency), the targets, SHAP tables, regimes and failure cases.
 - **`meta_p.csv` was added after the run.** It summarizes the run's own saved candidates; nothing was re-run.
 - **Smoke-tested before the run** on the synthetic planted-signal dataset (monthly folds, 2 permutations), so a crash couldn't cut the real run short.
+
+## Phase 6 Workstream D: live system, paper-trading readiness (2026-10-29)
+
+Built to the scope doc's weeks 6–7: a repeatable hourly inference workflow, logging, error handling, prediction records, a paper-trading executor (internal simulator), a parity check, scheduling, Docker, CI and a runbook. The rules are in `SCOPE.md` ("Phase 6 Workstream D: live system definitions"), fixed before the forward test. **No orders are ever placed and no exchange keys are used.** Nothing is installed or running yet; the forward test starts in Workstream E.
+
+### Modules (`mbpe/live/`)
+- **`market`:** a REST top-up of closed bars newer than the archive, into a separate live store. It's validated with the clean-layer schemas, and the archive is never modified.
+- **`news`:** the incremental news dedup store and FinBERT scoring of new titles.
+- **`features`:** the backtest's feature code at one decision time, on archive + live data.
+- **`model`:**
+  - `freeze` trains on everything before the holdout start, exactly like a walk-forward fold; the meta-model trains on the walk-forward folds' out-of-sample candidates;
+  - the version is a hash of every fitted parameter, and `load` checks the artifact's file hash against its manifest;
+  - `predict` makes the decision for one hour.
+- **`paper`:** the internal simulator. Each trade is settled by the label code itself, with the backtest's position rule.
+- **`run`:** the hourly orchestrator:
+  - each step is isolated, so a failing source is alerted and the run continues;
+  - staleness checks; no decision on stale inputs;
+  - late runs make no decision; a re-run for the same hour doesn't log twice;
+  - an append-only prediction log, feature snapshots and a daily summary.
+- **`parity`:** the daily live-vs-archive comparison (features, decisions, paper trades vs labels).
+- **`every`:** a fixed-minute / fixed-interval runner for containers without cron.
+- **Ops:**
+  - schedulers in `deploy/mbpe-live.cron` and `deploy/com.mbpe.live.plist`, plus the collector examples from Workstream A;
+  - `Dockerfile` + `docker-compose.yml`;
+  - CI in `.github/workflows/ci.yml`: ruff, format, tests and the generated-table check;
+  - `docs/RUNBOOK.md`.
+
+### What the checks showed
+- **Incremental news dedup equals a full run.** Processing rows in time-ordered chunks, with the previous 48 h as fixed context, reproduces a single full run exactly (test). On a real 3-day slice, the modified `dedup()` equals the committed version (cluster ids, first dates, match similarities).
+- **Workstream C is unaffected:** re-running the LightGBM walk-forward after the refactors reproduces Workstream C's candidates exactly.
+- **The frozen model matches the research code.** Freezing twice gives the same version, `predict()` equals the research fitting code, and a tampered artifact is refused (tests).
+- **The paper executor reproduces the backtest exactly.** Run hour by hour, with each run seeing only the candles closed by then, every settled trade equals its backtest label and the trades taken equal the backtest's position rule (test).
+- **REST matches the archive.** On archived windows, every REST row equals its archive row in every compared column:
+
+<!-- generated:phase6_d_rest_archive -->
+| dataset | 6 h windows | archive rows | REST rows | rows identical (every compared column) |
+|---|---|---|---|---|
+| futures_klines_1m | 5 | 1,800 | 1,800 | 1,800 |
+| spot_klines_1m | 5 | 1,800 | 1,800 | 1,800 |
+| metrics | 5 | 355 | 360 | 355 |
+| funding | 5 | 15 | 15 | 15 |
+| mark_price_1m | 5 | 1,800 | 1,800 | 1,800 |
+| premium_index_1m | 5 | 1,800 | 1,800 | 1,800 |
+<!-- /generated:phase6_d_rest_archive -->
+
+- **Open-interest timestamps differ by 5 minutes.** Before relabeling, *no* open-interest row matched by timestamp. REST labels each snapshot 5 minutes later than the archive, with identical values.
+  - The live store now relabels REST rows to the archive convention, so live features equal the training features. Open interest has a few more REST rows than compared archive rows only because the relabeled first row falls just before each compared window.
+  - **Research caveat:** the backtests' "create_time < t" rule may have admitted the snapshot observed at t itself. It's published within seconds, before the 1-minute entry, so it's tradable, but not strictly "before t". This could only have flattered results that showed no edge; it's recorded in `SCOPE.md` as a limitation.
+- **End-to-end dry runs** (development model and outputs in scratch, not the forward-test record):
+  - a live hourly cycle computed all 103 features from live data, with every source fresh, and produced a calibrated decision (no trade that hour: no side had positive expected net R);
+  - a run started 25 minutes after the hour correctly made no decision;
+  - on back-dated hours the archive covers, the parity check found every feature within tolerance and every decision in agreement.
+- **CI works without local data:** in a fresh clone with no `data/`, the suite passes and the tests needing local data skip themselves.
+
+### Bugs found and fixed during this workstream
+- **Open-interest gap:** the REST open-interest top-up stopped at 500 rows. With start and end times set, Binance returns the *latest* 500 rows, so a day and a half was silently missing. It now fetches explicit windows of at most 500 rows.
+- **Dedup chunks:** new rows joining an existing cluster had taken the chunk's first date instead of the cluster's, and new cluster ids could repeat older ones. Both are fixed and covered by the chunked-equals-full test.
+- **Paper ledger:** an empty paper ledger file broke reading it. The executor no longer creates one, and the reader treats empty as empty.
+- **Feature hash:** the feature-snapshot hash covered the whole month's table instead of the hour's row.
+- **Research vs live news rows:** once live GDELT collection added rows the research dedup file doesn't cover, the research news build refused to run (a real-data test caught it). A news build now uses rows and coverage up to the last batch its dedup store has processed:
+  - rows inside that range must all be covered;
+  - later rows belong to the live store;
+  - the research news feature rebuild stays byte-identical to the existing file.
