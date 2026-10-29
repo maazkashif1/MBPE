@@ -1,6 +1,6 @@
 # MBPE findings
 
-> Final. Tag `mbpe-research-v1` covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Tag `mbpe-research-v1.1` adds Phase 4, the checklist extensions, and `mbpe-research-v1.2` adds Phase 5, the longer horizon (both walk-forward only; the holdout stays closed). Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
+> Historical results final; forward test running. Tag `mbpe-research-v1` covers the walk-forward evaluation (2022-01-01 to 2026-04-26) and the single pre-registered holdout run (2026-04-26 onward). Tag `mbpe-research-v1.1` adds Phase 4, the checklist extensions, and `mbpe-research-v1.2` adds Phase 5, the longer horizon (both walk-forward only; the holdout stays closed). Phase 6, the full scope doc with a live paper-trading forward test, follows below; its forward test is still running. Every result number below sits in a generated block, rebuilt from committed files in `reports/` by `uv run python -m mbpe.reports.progress` and checked by `tests/test_progress.py`. The surrounding text only interprets them.
 
 ## Question
 Can hourly signals from BTCUSDT perpetual market data, derivatives data and news headlines predict triple-barrier trade outcomes well enough to make money **after costs**? In particular, does adding news improve on market data alone? The pre-registered kill criterion: if the news layer doesn't improve net-of-costs results across folds and the holdout, that is the finding.
@@ -312,3 +312,125 @@ Passing would only have qualified an extension for a forward test.
 <!-- /generated:phase5_entry_shares -->
 
 - **Fix for any future use:** rank on the uncalibrated model score, or break ties explicitly, so the rule selects the intended share.
+
+## Phase 6: the full scope doc, and a forward test
+**Why:** after Phase 5, the remaining work was to deliver every component of the project's scope doc rather than stop at a negative finding. Each piece was pre-registered in `SCOPE.md` ("Phase 6") before it was built or run:
+- **Data:** mark-price and premium-index features, and regulatory and major-announcement news flags; plus forward-only collectors for liquidations, RSS and Reddit.
+- **Models:** the scope doc's three-class primary model (stop / expiry / take-profit first; LightGBM, with CatBoost alongside) and a meta-labeling filter trained only on out-of-sample predictions (P ≥ 0.60).
+- **Analysis:** SHAP, a targets table, regimes and failure cases.
+- **Live system:** a live system and an internal paper-trading simulator.
+
+**Status:** 2021–2026 has been studied since Phase 3 and the holdout is spent, so every historical Phase 6 result is **development evidence**. Only the forward test can establish an edge.
+
+### Historical evaluation (one pre-registered run)
+
+<!-- generated:phase6_c_headline -->
+| | |
+|---|---|
+| headline | LightGBM three-class primary + meta-filter (P ≥ 0.60), label set A, taker, folds 4-17 |
+| **trades / mean net R [95% CI]** | 13 / **-0.172 [-0.412, +0.007]** |
+| net / gross bps per trade | -10.8 / +3.1 |
+| primary only, same folds: trades / mean net R [95% CI] | 3,165 / -0.222 [-0.261, -0.181] |
+| shuffled-label runs (meta-filtered): runs with trades / min / median / max mean net R | 19 / -0.680 / -0.071 / +1.865 |
+| headline beats how many shuffled runs | 5 of 19 |
+| random entry / volatility filter at its frequency: median mean net R | -0.259 / -0.154 |
+| always-long, same folds: mean net R [95% CI] | -0.244 [-0.269, -0.217] |
+<!-- /generated:phase6_c_headline -->
+
+- **The pre-registered system barely trades,** and what it trades doesn't make money after costs.
+- **The meta-model's probabilities are well calibrated**, but a candidate's realistic chance of success sits far below 0.60. So the scope doc's fixed threshold selects only a rare tail:
+
+<!-- generated:phase6_c_meta_p -->
+| primary | candidates scored by the meta-model | actual success rate (net R > 0) | P(success): median | 90th pct | 99th pct | share ≥ 0.60 |
+|---|---|---|---|---|---|---|
+| lgbm | 7,352 | 34.4% | 0.36 | 0.41 | 0.55 | 0.20% |
+| catboost | 6,005 | 35.2% | 0.35 | 0.42 | 0.57 | 0.87% |
+<!-- /generated:phase6_c_meta_p -->
+
+- **Primary vs meta-filter:** at the validation-chosen threshold the meta-filter improves on the primary model and beats every shuffled-label run that traded, but it still loses after taker costs. No configuration, LightGBM or CatBoost, has a 95% CI entirely above zero (full tables in `PROGRESS.md`, "Phase 6 Workstream C").
+- **Targets** (research objectives from the scope doc, not pass criteria):
+
+<!-- generated:phase6_c_targets -->
+| model | strategy | period | trades | hit rate (net R > 0) — target 54–58% | direction right (gross R > 0) | Sharpe (annualized, 1% risk) — target ≥ 1.8 | profit factor — target ≥ 1.6 | max drawdown — target < 12% | targets met |
+|---|---|---|---|---|---|---|---|---|---|
+| lgbm | primary only | folds 0-17 | 4,522 | 36.1% | 44.4% | -5.60 | 0.65 | 100.0% | 0 of 4 |
+| lgbm | primary + meta (P ≥ 0.60) | folds 4-17 | 13 | 30.8% | 38.5% | -0.29 | 0.66 | 4.3% | 1 of 4 |
+| lgbm | primary + meta (validation threshold) | folds 4-17 | 1,578 | 38.5% | 46.4% | -2.69 | 0.75 | 88.7% | 0 of 4 |
+| catboost | primary only | folds 0-17 | 3,988 | 37.3% | 44.4% | -4.15 | 0.72 | 99.8% | 0 of 4 |
+| catboost | primary + meta (P ≥ 0.60) | folds 4-17 | 41 | 43.9% | 43.9% | -0.11 | 0.94 | 8.9% | 1 of 4 |
+| catboost | primary + meta (validation threshold) | folds 4-17 | 1,552 | 37.6% | 45.7% | -2.35 | 0.78 | 85.4% | 0 of 4 |
+<!-- /generated:phase6_c_targets -->
+
+**What the models use (SHAP):**
+- **The primary models lean mostly on time of day, day of week and volatility.** News carries a sizeable share in total, spread thinly over many features, and the new mark/premium and regulatory features carry little.
+- **The meta-filter is mostly a volatility filter.**
+- **Importances are stable from fold to fold.**
+- SHAP shows what a model uses, not that it profits:
+
+<!-- generated:phase6_c_shap -->
+Top 10 features by mean |SHAP| (LightGBM; share of the model's total):
+
+- **primary_long:** hour_of_day (technical, 9.6%), atr_1h_pct (technical, 6.4%), day_of_week (technical, 3.6%), rv_24h (technical, 3.4%), vol_z_7d (technical, 3.1%), vwap_day_dist_atr (technical, 3.1%), oi_chg_24h (derivatives, 2.5%), cvd_norm_24h (technical, 2.3%), premium_z_7d (mark_premium, 2.1%), ret_1h (technical, 1.9%)
+- **primary_short:** hour_of_day (technical, 10.1%), atr_1h_pct (technical, 6.7%), day_of_week (technical, 3.8%), dist_low_24h_atr (technical, 3.6%), vol_z_7d (technical, 3.4%), rsi_14_1h (technical, 2.6%), oi_chg_24h (derivatives, 2.6%), premium_z_7d (mark_premium, 2.5%), news_macro_new_clusters_24h (news, 2.4%), rv_24h (technical, 2.0%)
+- **meta:** rv_1h (technical, 23.9%), atr_1h_pct (technical, 23.5%), rv_24h (technical, 18.2%), p_expiry (meta input, 9.7%), rv_4h (technical, 8.6%), p_sl (meta input, 6.5%), p_tp (meta input, 5.4%), side (meta input, 4.3%)
+
+Share of total |SHAP| by feature group:
+
+| model | technical | derivatives | news | calendar | mark_premium | regulatory |
+|---|---|---|---|---|---|---|
+| lgbm primary_long | 56.1% | 6.7% | 25.9% | 2.3% | 5.0% | 4.0% |
+| lgbm primary_short | 54.3% | 6.4% | 27.3% | 2.5% | 5.9% | 3.6% |
+| catboost primary_long | 56.8% | 8.0% | 23.5% | 2.1% | 5.5% | 4.1% |
+| catboost primary_short | 55.9% | 7.3% | 25.0% | 2.3% | 6.7% | 2.9% |
+
+Fold-to-fold stability (Spearman rank correlation of feature importances between folds):
+
+| model | folds | mean ρ | min ρ |
+|---|---|---|---|
+| catboost meta | 14 | 0.63 | 0.02 |
+| catboost primary_long | 18 | 0.80 | 0.66 |
+| catboost primary_short | 18 | 0.86 | 0.72 |
+| lgbm meta | 14 | 0.70 | 0.00 |
+| lgbm primary_long | 18 | 0.79 | 0.59 |
+| lgbm primary_short | 18 | 0.86 | 0.71 |
+<!-- /generated:phase6_c_shap -->
+
+### The live system
+Built to the scope doc's integration and paper-trading-readiness stage (`mbpe/live/`, operated via `docs/RUNBOOK.md`). Each hour it:
+1. tops up market data from Binance's free REST API (the archive stays the source of record);
+2. extends the news clusters and sentiment;
+3. computes every feature with the backtest's code;
+4. applies the frozen model;
+5. paper-trades with the backtest's own label code and position rule.
+
+**No orders and no exchange keys.** Missed, late and stale hours mean no decision.
+
+**Checks before it went live:**
+- the live paper loop, run hour by hour, reproduces the backtest's labels and position rule exactly;
+- the incremental news processing equals a full run;
+- the frozen model's predictions equal the research code's.
+- On archived windows, the REST API returns rows identical to the archive:
+
+<!-- generated:phase6_d_rest_archive -->
+| dataset | 6 h windows | archive rows | REST rows | rows identical (every compared column) |
+|---|---|---|---|---|
+| futures_klines_1m | 5 | 1,800 | 1,800 | 1,800 |
+| spot_klines_1m | 5 | 1,800 | 1,800 | 1,800 |
+| metrics | 5 | 355 | 360 | 355 |
+| funding | 5 | 15 | 15 | 15 |
+| mark_price_1m | 5 | 1,800 | 1,800 | 1,800 |
+| premium_index_1m | 5 | 1,800 | 1,800 | 1,800 |
+<!-- /generated:phase6_d_rest_archive -->
+
+**One finding from that comparison:** REST labels each open-interest snapshot 5 minutes later than the archive, with identical values.
+- **Live fix:** live rows are relabeled to the archive convention, so live features equal the training features.
+- **Research caveat:** the backtests' "before t" rule may have admitted the open-interest snapshot taken at the decision time itself. It's available within seconds, before the 1-minute entry, so it's tradable, and it could only have flattered results that found no edge. It's recorded as a limitation, not corrected retroactively.
+
+### Forward test (running)
+- **The system:** the frozen LightGBM primary + meta-filter, trained on data before 2026-04-26, paper-traded from 2026-10-29 13:00 UTC. The model version and threshold are fixed in a start record committed before the first decision.
+- **Threshold:** the meta-filter's validation-chosen threshold, not 0.60. At 0.60 the system would trade only rarely (meta-probability table above), so 100 trades would take years.
+  - This was a dated amendment, **made after seeing the historical results**, in which this variant still lost money after costs. The forward test therefore has a negative historical expectation: it tests the scoped system as built, not a candidate edge.
+- **Verdict** (pre-registered): only after ≥ 6 months **and** ≥ 100 closed paper trades.
+  - Pass = mean net R after taker costs > 0 with the 95% CI lower bound > 0, **and** above always-long over the same hours.
+  - No change to the model, threshold or rules before then. A daily parity check compares the live system with the archive.
+- **Until the verdict, the finding stands:** no edge after costs.
