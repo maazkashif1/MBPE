@@ -34,7 +34,7 @@ def fake_row() -> pl.DataFrame:
 @pytest.fixture
 def faked(monkeypatch, tmp_path):
     from mbpe.data import binance_rest as market
-    from mbpe.data import gdelt_live
+    from mbpe.data import btcusdc, gdelt_live
     from mbpe.features import live as features
     from mbpe.live import news_update as news
     from mbpe.live import paper_trading as paper
@@ -46,6 +46,8 @@ def faked(monkeypatch, tmp_path):
     monkeypatch.setattr(news, "update_scores", lambda: None)
     state = {"data": fake_data()}
     monkeypatch.setattr(market, "load_live_data", lambda: state["data"])
+    monkeypatch.setattr(btcusdc, "update", lambda: {})
+    monkeypatch.setattr(btcusdc, "load", lambda: {k: state["data"][k] for k in btcusdc.DATASETS})
     monkeypatch.setattr(features, "live_features", lambda t, data: fake_row())
 
     class FZ:
@@ -60,7 +62,7 @@ def faked(monkeypatch, tmp_path):
 
     monkeypatch.setattr(lr.lmod, "predict", predict)
 
-    def pstep(now, candles, funding, decision, version, root):
+    def pstep(now, candles, funding, decision, version, root, atr_candles=None):
         calls["paper"] += 1
         return []
 

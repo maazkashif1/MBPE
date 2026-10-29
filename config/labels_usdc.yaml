@@ -1,0 +1,12 @@
+# Live execution settings on BTCUSDC (Tests A and B, amendment 2026-10-29). Same barriers as config/labels.yaml.
+tp_atr: 2.0            # take-profit distance, in ATRs
+sl_atr: 1.0            # stop distance, in ATRs (also the R unit)
+horizon_minutes: 240   # barrier window from the entry minute
+atr_period: 14         # Wilder ATR on 1h bars
+taker_fee: 0.0004      # BTCUSDC regular-user taker fee (amendment 2026-10-29)
+slippage_bps: 2.0      # per side
+latency_minutes: 1     # entry at the open of the 1m candle starting at t + latency
+funding_interval_hours: 8  # labels fail if a funding time inside a trade window has no data
+atr_timeframe: 1h      # label set A
+maker_fee: 0.0        # BTCUSDC regular-user maker fee, promotion (amendment 2026-10-29)
+output: data/labels/triple_barrier_usdc.parquet

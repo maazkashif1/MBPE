@@ -13,9 +13,13 @@ from mbpe.labels.triple_barrier import (
 )
 
 PAPER = Path("data/live/paper")
-LABEL_CONFIG = Path("config/labels.yaml")
+LABEL_CONFIG = Path("config/labels_usdc.yaml")
 MIN = 60_000
 R_FIELDS = ("gross_R", "fee_R", "slippage_R", "funding_R", "net_R", "net_R_maker_entry_tp")
+
+
+def fees(cfg) -> dict:
+    return {"taker": cfg.taker_fee, "maker": cfg.maker_fee, "slippage_bps": cfg.slippage_bps}
 
 
 def _iso(ms: int) -> str:
@@ -61,11 +65,11 @@ def _close(pos: dict, res: dict) -> dict:
     }
 
 
-def _open(decision: dict, candles: pl.DataFrame, cfg, model_version: str) -> dict:
+def _open(decision: dict, candles: pl.DataFrame, cfg, model_version: str, atr_candles: pl.DataFrame) -> dict:
     t = decision["decision_ms"]
     entry_ms = t + cfg.latency_minutes * MIN
     bar = candles.filter(pl.col("open_time").dt.epoch("ms") == entry_ms)
-    atr = decision_atr(candles.filter(pl.col("open_time").dt.epoch("ms") < t), cfg)
+    atr = decision_atr(atr_candles.filter(pl.col("open_time").dt.epoch("ms") < t), cfg)
     atr = atr.filter(pl.col("decision_time").dt.epoch("ms") == t)["atr"]
     if not bar.height or not atr.len() or atr[0] is None:
         return {"event": "skip", "decision_time": _iso(t), "reason": "entry candle or ATR missing"}
@@ -85,6 +89,7 @@ def _open(decision: dict, candles: pl.DataFrame, cfg, model_version: str) -> dic
         "sl": price - sgn * cfg.sl_atr * a,
         "meta_p": decision.get("meta_p"),
         "model_version": model_version,
+        "fees": fees(cfg),
     }
 
 
@@ -95,6 +100,7 @@ def step(
     decision: dict | None,
     model_version: str,
     root: Path = PAPER,
+    atr_candles: pl.DataFrame | None = None,
 ) -> list[dict]:
     cfg = load_config(LABEL_CONFIG)
     state_p, ledger_p = root / "state.json", root / "ledger.jsonl"
@@ -110,7 +116,7 @@ def step(
                 {"event": "skip", "decision_time": _iso(t), "reason": "position open (one at a time)"}
             )
         else:
-            ev = _open(decision, candles, cfg, model_version)
+            ev = _open(decision, candles, cfg, model_version, candles if atr_candles is None else atr_candles)
             events.append(ev)
             if ev["event"] == "open":
                 state["open"] = ev

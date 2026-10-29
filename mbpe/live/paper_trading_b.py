@@ -6,9 +6,10 @@ import polars as pl
 
 from mbpe.labels.limit_orders import limit_order_trade
 from mbpe.labels.triple_barrier import decision_atr, load_config
+from mbpe.live.paper_trading import fees
 
 PAPER_B = Path("data/live/paper_b")
-LABEL_CONFIG = Path("config/labels.yaml")
+LABEL_CONFIG = Path("config/labels_usdc.yaml")
 MIN = 60_000
 SEEN = 48
 
@@ -62,6 +63,7 @@ def step(
     decision: dict | None,
     model_version: str,
     root: Path = PAPER_B,
+    atr_candles: pl.DataFrame | None = None,
 ) -> list[dict]:
     cfg = load_config(LABEL_CONFIG)
     state_p, ledger_p = root / "state.json", root / "ledger.jsonl"
@@ -87,7 +89,7 @@ def step(
         if state["pending"] is not None or t < state["free_ms"]:
             events.append({**skip, "reason": "busy"})
         else:
-            atr = _atr(t, candles, cfg)
+            atr = _atr(t, candles if atr_candles is None else atr_candles, cfg)
             entry = candles.filter(pl.col("open_time").dt.epoch("ms") == t + cfg.latency_minutes * MIN)
             if atr is None or not entry.height:
                 events.append({**skip, "reason": "entry candle or ATR missing"})
@@ -102,6 +104,7 @@ def step(
                         "side": side,
                         "atr": atr,
                         "meta_p": decision.get("meta_p"),
+                        "fees": fees(cfg),
                     }
                 )
                 settle()

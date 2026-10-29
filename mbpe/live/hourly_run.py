@@ -80,7 +80,7 @@ def _paper_b_step(*args):
 
 def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root: Path = LIVE) -> dict:
     from mbpe.data import binance_rest as lm
-    from mbpe.data import gdelt_live
+    from mbpe.data import btcusdc, gdelt_live
     from mbpe.features.live import live_features
     from mbpe.live import news_update as ln
 
@@ -105,6 +105,7 @@ def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root:
             return None
 
     step("market_top_up", lm.top_up)
+    step("usdc_top_up", btcusdc.update)
     step("gdelt_collect", gdelt_live.collect)
     step("news_dedup", ln.update_dedup)
     step("news_sentiment", ln.update_scores)
@@ -147,10 +148,14 @@ def run_hourly(now: datetime | None = None, model_dir: Path | None = None, root:
             decision["decision_ms"] = t
             rec |= {"model_version": fz.version, "eligible": eligible, **decision}
         _append(root / "predictions.jsonl", rec)
-    if data is not None and fz is not None:
-        candles, funding = data["futures_klines_1m"], data["funding"]
-        step("paper", lambda: paper.step(now, candles, funding, decision, fz.version, root / "paper"))
-        step("paper_b", lambda: _paper_b_step(now, candles, funding, decision, fz.version, root / "paper_b"))
+    usdc = step("load_usdc", btcusdc.load)
+    if data is not None and fz is not None and usdc is not None:
+        candles, funding, atr_c = usdc["futures_klines_1m"], usdc["funding"], data["futures_klines_1m"]
+        step("paper", lambda: paper.step(now, candles, funding, decision, fz.version, root / "paper", atr_c))
+        step(
+            "paper_b",
+            lambda: _paper_b_step(now, candles, funding, decision, fz.version, root / "paper_b", atr_c),
+        )
     if now.hour == 0 and now.minute < 30:
         step("daily_summary", lambda: daily_summary(now, root))
     return rec

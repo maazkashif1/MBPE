@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from mbpe.data import btcusdc
 from mbpe.data.binance_rest import archive_end
 from mbpe.features.market import DATASETS, REGISTRY, build_features, load_data, load_feature_config
 from mbpe.features.news import NEWS_REGISTRY, build_news_features, load_inputs
@@ -71,11 +72,12 @@ def check(root: Path = LIVE, model_root: Path = lmod.MODEL_ROOT) -> dict:
     closes = led.filter(pl.col("event") == "close") if led.height else led
     trade_ok, trade_n = 0, 0
     if closes.height:
-        data = load_data()
+        data = btcusdc.load()
+        last = int(data["futures_klines_1m"]["open_time"].max().timestamp() * 1000)
         lcfg = load_config(paper.LABEL_CONFIG)
         for c in closes.iter_rows(named=True):
             t = int(pl.Series([c["decision_time"]]).str.to_datetime(time_zone="UTC").dt.epoch("ms")[0])
-            if t + lcfg.horizon_minutes * 60_000 > archive_end("futures_klines_1m"):
+            if t + lcfg.horizon_minutes * 60_000 > last:
                 continue
             opened = led.filter((pl.col("event") == "open") & (pl.col("trade_id") == c["trade_id"])).row(
                 0, named=True

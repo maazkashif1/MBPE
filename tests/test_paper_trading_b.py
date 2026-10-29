@@ -8,7 +8,7 @@ from mbpe.labels.limit_orders import run_book
 from mbpe.labels.triple_barrier import load_config
 from mbpe.live import paper_trading_b as pb
 
-CFG = load_config()
+CFG = load_config(pb.LABEL_CONFIG)
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 HOUR = 3_600_000
 ATR = 0.5

@@ -74,13 +74,13 @@ def metrics_frame(rows: list[dict], fetched_ms: int) -> pl.DataFrame:
     )
 
 
-def fetch(dataset: str, start_ms: int, end_ms: int, get=get_json) -> pl.DataFrame:
+def fetch(dataset: str, start_ms: int, end_ms: int, get=get_json, symbol: str = "BTCUSDT") -> pl.DataFrame:
     if dataset in KLINE_URL:
         url, limit = KLINE_URL[dataset]
         rows, cursor = [], start_ms
         while cursor < end_ms:
             page = get(
-                f"{url}?symbol=BTCUSDT&interval=1m&startTime={cursor}&endTime={end_ms - 1}&limit={limit}"
+                f"{url}?symbol={symbol}&interval=1m&startTime={cursor}&endTime={end_ms - 1}&limit={limit}"
             )
             rows += page
             if len(page) < limit:
@@ -98,9 +98,9 @@ def fetch(dataset: str, start_ms: int, end_ms: int, get=get_json) -> pl.DataFram
         return metrics_frame(rows, end_ms)
     if dataset == "funding":
         rows = get(
-            f"{FAPI}/fapi/v1/fundingRate?symbol=BTCUSDT&startTime={start_ms}&endTime={end_ms - 1}&limit=1000"
+            f"{FAPI}/fapi/v1/fundingRate?symbol={symbol}&startTime={start_ms}&endTime={end_ms - 1}&limit=1000"
         )
-        info = [x for x in get(f"{FAPI}/fapi/v1/fundingInfo") if x["symbol"] == "BTCUSDT"]
+        info = [x for x in get(f"{FAPI}/fapi/v1/fundingInfo") if x["symbol"] == symbol]
         interval = info[0]["fundingIntervalHours"] if info else DEFAULT_FUNDING_INTERVAL_H
         return pl.DataFrame(
             {
