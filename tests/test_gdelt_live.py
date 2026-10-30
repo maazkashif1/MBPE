@@ -181,3 +181,26 @@ def test_late_publish_logs_warning(tmp_path, caplog):
     other = tmp_path / "ok"
     collect(other, get=FakeGdelt(latest), now=latest + timedelta(minutes=2))
     assert json.loads(batch_paths(latest, other)[1].read_text())["late_publish"] is False
+
+
+def test_budget_defers_older_batches_newest_first(tmp_path):
+    latest = datetime(2026, 10, 27, 10, 0, tzinfo=UTC)
+    fake, ticks = FakeGdelt(latest), iter(range(1000))
+    s = collect(tmp_path, get=fake, now=latest, budget_s=5, clock=lambda: next(ticks))
+    fetched = [u for u in fake.requested if not u.endswith("lastupdate.txt")]
+    assert fetched[0] == batch_url(latest) and len(s["saved"]) == len(fetched) < int(CATCHUP / STEP)
+    assert s["deferred"] == int(CATCHUP / STEP) - len(fetched)
+
+
+def test_failed_batch_is_skipped_not_fatal(tmp_path):
+    latest = datetime(2026, 10, 27, 10, 0, tzinfo=UTC)
+    fake = FakeGdelt(latest)
+
+    def flaky(url):
+        if url == batch_url(latest - STEP):
+            raise TimeoutError("read timed out")
+        return fake(url)
+
+    s = collect(tmp_path, get=flaky, now=latest)
+    assert s["failed"] == [(latest - STEP).isoformat()]
+    assert len(s["saved"]) == int(CATCHUP / STEP) - 1

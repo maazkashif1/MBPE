@@ -1,3 +1,4 @@
+import http.client
 import json
 import logging
 import time
@@ -37,7 +38,7 @@ def get_json(url: str, tries: int = 4):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
                 return json.loads(r.read())
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (urllib.error.URLError, TimeoutError, http.client.IncompleteRead, ConnectionError) as e:
             if attempt == tries - 1:
                 raise
             log.warning("GET %s failed (%s); retrying", url.split("?")[0], e)

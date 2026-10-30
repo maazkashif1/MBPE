@@ -2,7 +2,10 @@ import hashlib
 import importlib
 import json
 import logging
+import os
 import sys
+import threading
+import time
 import traceback
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +32,7 @@ STALE_MIN = {
     "funding": 9 * 60,
 }
 MAX_LATE_MIN = 15
+WATCHDOG_MIN = 50
 
 
 def _append(path: Path, rec: dict) -> None:
@@ -197,7 +201,28 @@ def daily_summary(now: datetime, root: Path = LIVE) -> Path:
     return p
 
 
+def watchdog(
+    limit_s: float = WATCHDOG_MIN * 60, root: Path = LIVE, clock=time.time, sleep=time.sleep, stop=os._exit
+) -> threading.Thread:
+    start = clock()
+
+    def loop() -> None:
+        while clock() - start < limit_s:
+            sleep(30)
+        alert(
+            "watchdog",
+            f"run still going after {limit_s / 60:.0f} min; stopped so the next hour can run",
+            root,
+        )
+        stop(3)
+
+    th = threading.Thread(target=loop, daemon=True)
+    th.start()
+    return th
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    watchdog()
     md = Path(sys.argv[sys.argv.index("--model") + 1]) if "--model" in sys.argv else None
     print(json.dumps(run_hourly(model_dir=md), indent=1, default=str))

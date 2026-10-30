@@ -1,9 +1,11 @@
 import hashlib
+import http.client
 import io
 import json
 import logging
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -21,6 +23,9 @@ LIVE = Path("data/raw/gdelt_live")
 STEP = timedelta(minutes=15)
 CATCHUP = timedelta(hours=48)
 UA = {"User-Agent": "mbpe/0.1"}
+TIMEOUT_S = 20
+BUDGET_S = 180
+FETCH_ERRORS = (OSError, http.client.HTTPException)
 TITLE_RE = re.compile(r"<PAGE_TITLE>(.*?)</PAGE_TITLE>")
 GKG_FIELDS = 27
 DATE, SOURCE, URL, TONE, TRANSLATION, EXTRAS = 1, 3, 4, 15, 25, 26
@@ -58,7 +63,7 @@ def unzip_verified(blob: bytes, size: int | None = None, md5: str | None = None)
 
 def http_get(url: str) -> tuple[bytes, dict] | None:
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=TIMEOUT_S) as r:
             return r.read(), dict(r.headers)
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -122,19 +127,31 @@ def check_publish_lag(ts: datetime, published_at: datetime) -> dict:
     return {"publish_minus_label_s": lag.total_seconds(), "late_publish": late}
 
 
-def collect(root: Path = LIVE, get=http_get, now: datetime | None = None) -> dict:
+def collect(
+    root: Path = LIVE, get=http_get, now: datetime | None = None, budget_s: float = BUDGET_S, clock=time.time
+) -> dict:
+    deadline = clock() + budget_s
     body, headers = get(f"{BASE}/lastupdate.txt")
     latest, size, md5 = parse_lastupdate(body.decode())
     modified = next((v for k, v in headers.items() if k.lower() == "last-modified"), None)
     published_at = parsedate_to_datetime(modified).astimezone(UTC).isoformat() if modified else None
-    summary = {"latest": latest.isoformat(), "saved": [], "already": 0, "not_published": []}
+    summary = {"latest": latest.isoformat(), "saved": [], "already": 0, "not_published": [], "failed": []}
+    summary["deferred"] = 0
 
     ts = latest
     while ts > latest - CATCHUP:
         if is_saved(ts, root):
             summary["already"] += 1
+        elif clock() > deadline:
+            summary["deferred"] += 1
         else:
-            got = get(batch_url(ts))
+            try:
+                got = get(batch_url(ts))
+            except FETCH_ERRORS as e:
+                summary["failed"].append(ts.isoformat())
+                log.warning("batch %s fetch failed (%s); retried on a later run", ts.isoformat(), e)
+                ts -= STEP
+                continue
             if got is None:
                 summary["not_published"].append(ts.isoformat())
             else:
