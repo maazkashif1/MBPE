@@ -311,6 +311,13 @@ The holdout is run once to conclude the study (option 1 in reports/FINDINGS.md).
   - **Parity:** the daily check of paper trades against the label code uses the BTCUSDC data.
   - **Stale BTCUSDC data:** if the BTCUSDC store's last 1m candle ends more than 5 minutes before the decision time, neither test opens a new position that hour (an alert is logged); open positions keep settling once data arrives. This matches the existing stale-input rule.
   - **Start record (BTCUSDC restart):** first decision on BTCUSDC for both tests = **2026-10-29 19:00 UTC** (run at 19:03 by launchd), code commit b12002a. That run logged `usdc_top_up`, `load_usdc`, `paper` and `paper_b` as ok, and both tests started with empty state (no trade at 19:00: neither side had positive expected net R). Earliest verdict: 2027-04-29 19:00 UTC, and only with ≥ 100 closed trades per test.
+- **2026-10-30 (during the forward test): bug fix, network time limits and a run watchdog; no change to decisions or trading rules.**
+  - **Problem:** from 29 Oct 19:00 to 30 Oct 16:00 UTC, slow GDELT downloads and Binance downloads cut off mid-transfer made hourly runs take 15–35 min, so runs started late and hours were recorded as late or stale. A run that hung at 07:39 UTC kept running for 9 h and blocked every later run until it was stopped by hand.
+  - **Fix:**
+    - GDELT collection gets 3 min per run and 20 s per file, newest files first; a failed file is skipped and retried on later runs within the existing 48 h catch-up.
+    - A Binance download cut off mid-transfer (IncompleteRead) is retried like a timeout.
+    - A run still going 50 min after it started (wall clock, so time asleep counts) stops itself and logs an alert, so it can never block the next hour.
+  - **Effect:** none on the model, threshold, features, decision rules, costs or trade settlement. Hours lost before the fix stay recorded as missed, late or stale.
 
 ## Phase 5 pre-registration: longer horizon (decided 2026-10-28, before any Phase 5 label or model)
 
